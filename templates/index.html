@@ -152,7 +152,7 @@
                                             <s-th>选择</s-th>
                                         </s-tr>
                                     </s-thead>
-                                    <s-tbody id="lession-list">
+                                    <s-tbody id="lesson-list">
                                         <!-- 单元列表 -->
                                     </s-tbody>
                                 </s-table>
@@ -203,15 +203,15 @@
     <script src="https://unpkg.com/sober@1.0.6/dist/sober.min.js"></script>
     <script>
         let autoRefreshInterval = null;
-        let selectedLessions = new Set(); // 存储选中的单元ID
+        let selectedlessons = new Set(); // 存储选中的单元ID
 
         // 添加/移除单元ID
-        function addLession(lessionId) {
-            const checkbox = document.querySelector(`s-checkbox[onchange*="${lessionId}"]`);
+        function addlesson(lessonId) {
+            const checkbox = document.querySelector(`s-checkbox[onchange*="${lessonId}"]`);
             if (checkbox.checked) {
-                selectedLessions.add(lessionId);
+                selectedlessons.add(lessonId);
             } else {
-                selectedLessions.delete(lessionId);
+                selectedlessons.delete(lessonId);
             }
         }
 
@@ -319,7 +319,6 @@
 
                 const { courses, cid, classid, uid } = data;
                 const tbody = document.getElementById('course-list');
-
                 // 动态生成表格行
                 tbody.innerHTML = courses.map(course => `
             <s-tr>
@@ -350,6 +349,7 @@
         // Cookie操作
         async function saveCookie() {
             const cookie = document.getElementById('cookie-input').value;
+            document.getElementById('loading').style.display = 'block';
             localStorage.setItem('cookie', cookie);
             localStorage.setItem('lastModified', new Date().toLocaleString());
             document.getElementById('lastModified').textContent = `上次保存：${localStorage.getItem('lastModified')}`;
@@ -358,61 +358,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ cookies: cookie })
             });
-        }
-
-        function getComponentValuesByName(name) {
-            const elements = document.querySelectorAll(`[name="${name}"]`);
-            const results = [];
-
-            elements.forEach(element => {
-                const tagName = element.tagName.toLowerCase();
-
-                if (tagName === 's-text-field') {
-                    // 正确获取 SoberJS 文本字段的值
-                    results.push(element.value ? element.value.trim() : '');
-
-                } else if (tagName === 's-picker') {
-                    // 保持原有选择器逻辑
-                    const selectedItem = element.querySelector('s-picker-item[selected]');
-                    if (selectedItem) {
-                        results.push({
-                            value: selectedItem.getAttribute('value'),
-                            text: selectedItem.textContent.trim()
-                        });
-                    }
-                }
-            });
-
-            return results.length === 1 ? results[0] : results;
-        }
-
-        function setComponentValuesByName(name, value) {
-            document.querySelectorAll(`[name="${name}"]`).forEach(element => {
-                if (element.tagName.toLowerCase() === 's-text-field') {
-                    // 精准定位输入元素的 3 层穿透
-                    const input = element.shadowRoot
-                        ?.querySelector('.view')          // 第一层容器
-                        ?.querySelector('[part="input"]') // 含 part 属性的真实输入框
-
-                    // 双重保险赋值方案
-                    if (input) {
-                        /* 核心赋值逻辑 */
-                        input.value = value; // 直接修改底层输入框
-
-                        // 触发完整事件链 (模拟真实用户输入)
-                        input.dispatchEvent(new Event('focus', { bubbles: true, composed: true }));
-                        input.dispatchEvent(new Event('input', {
-                            bubbles: true,
-                            composed: true, // 必须！穿透 Shadow DOM
-                            detail: { data: value }
-                        }));
-                        input.dispatchEvent(new Event('blur', { bubbles: true, composed: true }));
-
-                        // 同步框架数据层
-                        element.value = value; // 同时更新组件属性
-                    }
-                }
-            });
+            document.getElementById('loading').style.display = 'none';
+            checkLogon();
         }
 
         function displayCookieAndLastModified() {
@@ -428,54 +375,68 @@
 
         async function getCurrentStatus() {
             document.getElementById('loading').style.display = 'block';
-            await fetch('/api/status') // 获取当前状态
-                .then(res => res.json())
-                .then(data => {
-                    return {
-                        status: data.status,
-                        progress: {
-                            current: data.progress.current,
-                            total: data.progress.total
-                        },
-                        activeThreads: data.activeThreads
-                    };
-                });
-            document.getElementById('loading').style.display = 'none';
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                return {
+                    status: data.status,
+                    progress: {
+                        current: data.progress?.current || 0,
+                        total: data.progress?.total || 0
+                    },
+                    activeThreads: data.activeThreads || 0
+                };
+            } catch (error) {
+                console.error('获取状态失败:', error);
+                return { status: 'error' }; // 返回明确的错误状态
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
         }
 
         async function checkLogon() {
-            let currentStatus = {};
-            currentStatus = getCurrentStatus();
-            if (currentStatus.status != 'nologon') {
-                document.getElementById('dashboard').style.display = 'block';
-                await fetch('/api/getUserInfo') // 获取用户信息
-                    .then(res => res.json())
-                    .then(data => {
-                        document.getElementById('welcomeMessage').textContent = `欢迎回来，${data.name} (${data.student_id})！`;
-                        document.getElementById('onlineStatus').textContent = `在线状态：🟢 已登录`;
-                    });
-            }
-            else {
-                document.getElementById('dashboard').style.display = 'none';
-                document.getElementById('onlineStatus').textContent = `在线状态：🔴 未登录`;
-            }
-            return currentStatus == 'nologon' ? false : true;
-        }
+            try {
+                const currentStatus = await getCurrentStatus(); // 使用 await 解析 Promise
+                console.log('当前状态:', currentStatus);
 
+                if (currentStatus.status !== 'nologon') {
+                    document.getElementById('dashboard').style.display = 'block';
+                    const userRes = await fetch('/api/getUserInfo');
+                    const userData = await userRes.json();
+
+                    document.getElementById('welcomeMessage').textContent =
+                        `欢迎回来，${userData.name} (${userData.student_id})！`;
+                    document.getElementById('onlineStatus').textContent =
+                        '在线状态：🟢 已登录';
+                    return true;
+                } else {
+                    document.getElementById('dashboard').style.display = 'none';
+                    document.getElementById('onlineStatus').textContent =
+                        '在线状态：🔴 未登录';
+                    return false;
+                }
+            } catch (error) {
+                console.error('登录检查失败:', error);
+                document.getElementById('onlineStatus').textContent =
+                    '在线状态：⚪ 检测异常';
+                return false;
+            }
+        }
         async function selectCourse(cid) {
             document.getElementById('loading').style.display = 'block';
-            await fetch('/api/getLessions?cid=' + cid)
+            await fetch('/api/getLessons?cid=' + cid)
                 .then(res => res.json())
                 .then(data => {
                     console.log(data)
-                    const tbody = document.getElementById('lession-list');
-                    tbody.innerHTML = data.lessions.map(lession => `
+                    const tbody = document.getElementById('lesson-list');
+                    selectedlessons.clear();
+                    tbody.innerHTML = data.lessons.map(lesson => `
         <s-tr>
-          <s-td>${lession.id}</s-td>
-          <s-td>${lession.name}</s-td>
-          <s-td>${lession.visible ? "已开放" : "未开放"}</s-td>
+          <s-td>${lesson.id}</s-td>
+          <s-td>${lesson.name}</s-td>
+          <s-td>${lesson.visible ? "已开放" : "未开放"}</s-td>
           <s-td>
-            <s-checkbox onchange=addLession(${lession.id})>我要刷这个单元！</s-checkbox>
+            <s-checkbox onchange=addlesson("${lesson.id}")>我要刷这个单元！</s-checkbox>
           </s-td>
         </s-tr>
                     `).join('');
@@ -494,14 +455,14 @@
             }
 
             // 验证单元选择
-            if (selectedLessions.size === 0) {
+            if (selectedlessons.size === 0) {
                 alert('请至少选择一个单元！');
                 return;
             }
 
             // 获取参数
             const params = {
-                lessionIds: Array.from(selectedLessions),
+                lessonIds: Array.from(selectedlessons),
                 type: taskType
             };
 

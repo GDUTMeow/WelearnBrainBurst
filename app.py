@@ -32,13 +32,20 @@ from io import StringIO
 from werkzeug.wrappers.response import Response as WerkzeugResponse
 from bs4 import BeautifulSoup
 
+
 # ====================== 全局变量 ======================
 class GLOBAL:
     cid: int = -1
     uid: int = -1
-    classid:int = -1
+    classid: int = -1
+    lessonList: List[Dict[str, str]] = []
+    lessonIndex: List = []
+
 
 _global = GLOBAL()
+
+# 最大线程数量（挂机用）
+MAX_THREADS = 32
 
 # ====================== 应用初始化 ======================
 app = Flask(__name__)
@@ -87,8 +94,8 @@ class UnitInfo(TypedDict):
 class ProgressInfo(TypedDict):
     """进度信息数据结构"""
 
-    current: int
-    total: int
+    current: int = 0
+    total: int = 0
 
 
 TaskStatusType = Literal[
@@ -275,7 +282,7 @@ def api_login(cookies: str = None):
         cookie_dict = dict(
             map(lambda x: x.split("=", 1), filter(None, cookies.split(";")))
         )
-
+        log_message(f"尝试登录: {cookie_dict}")
         if validate_cookies(cookie_dict):
             client.cookies.update(cookie_dict)
             state.cookies = cookie_dict
@@ -298,6 +305,7 @@ def api_login(cookies: str = None):
 def get_courses():
     """获取课程列表"""
     if not state.cookies or state.task_status == "nologon":
+        log_message("用户未登录", "APPERR")
         return jsonify(success=False, error="请先登录")
 
     try:
@@ -305,36 +313,45 @@ def get_courses():
         response = client.get(
             url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"}
         )
+        log_message(f"获取课程列表: {response.text}", "APPDEBUG")
         courses: List[CourseInfo] = response.json()["clist"]
         return jsonify(success=True, error="", courses=courses)
     except Exception as e:
         return jsonify(success=False, error=str(e))
 
 
-@app.route("/api/getLessions", methods=["GET"])
-def get_lessions():
-    """获取课程节次列表"""
+@app.route("/api/getLessons", methods=["GET"])
+def get_lessons():
+    """获取课程单元列表"""
     if not state.cookies or state.task_status == "nologon":
+        log_message("用户未登录", "APPERR")
         return jsonify(success=False, error="请先登录")
 
     try:
         _global.cid = request.args.get("cid")
         url = f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}"
-        log_message(f"获取课程节次列表: {url}")
         response = client.get(
             url,
             headers={"Referer": "https://welearn.sflep.com/student/course_info.aspx"},
         )
+        # log_message(f"获取课程单元元数据页面: {response.text}", "APPDEBUG")
         _global.uid = re.search('"uid":(.*?),', response.text).group(1)
         _global.classid = re.search('"classid":"(.*?)"', response.text).group(1)
+        log_message(
+            f"成功解析到单元元数据: uid={_global.uid}, classid={_global.classid}",
+            "APPDEBUG",
+        )
         url = "https://welearn.sflep.com/ajax/StudyStat.aspx"
         response = client.get(
             url,
             params={"action": "courseunits", "cid": _global.cid, "uid": _global.uid},
             headers={"Referer": "https://welearn.sflep.com/student/course_info.aspx"},
         )
-        lessions = response.json()["info"]
-        return jsonify(success=True, error="", lessions=lessions)
+        log_message(f"获取课程单元列表: {response.text}", "APPDEBUG")
+        lessons = response.json()["info"]
+        _global.lessonList = lessons
+        _global.lessonIndex = [i.get("id") for i in lessons]
+        return jsonify(success=True, error="", lessons=lessons)
     except Exception as e:
         return jsonify(success=False, error=str(e))
 
@@ -343,18 +360,20 @@ def get_lessions():
 def start_task():
     """启动任务接口"""
     try:
-        if state.task_status != "idle":
+        if not state.task_status in ["idle", "completed", "error"]:
             return jsonify(success=False, error="已有任务在进行中")
 
         data = request.json
+        log_message(data)
         task_type = data["type"]
-        unit_idx = data["unitIndex"]
-        params = data["params"]
+        lessons = data["lessonIds"]
 
         if task_type == "brain_burst":
-            thread = BrainBurstThread(unit_idx, params)
+            rate = data["rate"]
+            thread = BrainBurstThread(lessons, rate)
         elif task_type == "away_from_keyboard":
-            thread = AwayFromKeyboardThread(unit_idx, params)
+            duration = data["time"]
+            thread = AwayFromKeyboardThread(lessons, duration)
         else:
             return jsonify(success=False, error="未知任务类型")
 
@@ -410,57 +429,308 @@ def validate_cookies(cookies: Dict[str, str]) -> bool:
 class BrainBurstThread(threading.Thread):
     """智能刷课线程"""
 
-    def __init__(self, unit_idx: int, mycrate: Union[int, Tuple[int, int]]):
+    def __init__(self, lessonIds: List[str], rate: int | str):
         super().__init__()
-        self.unit_idx = unit_idx
-        self.mycrate = mycrate
         self.daemon = True
+        self.lessonIds = lessonIds
+        self.rate = int(rate) if "-" not in rate else tuple(map(int, rate.split("-")))
 
     def run(self):
         try:
             state.task_status = "brain_burst"
-            # 这里添加具体的刷课逻辑
-            # 示例进度更新
-            for i in range(1, 101):
-                if state.stop_event.is_set():
-                    break
-                state.progress = {"current": i, "total": 100}
-                time.sleep(0.1)
+            infoHeaders = {
+                "Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}",
+            }
+            for lesson in self.lessonIds:  # 获取课程详细列表
+                response = client.get(
+                    f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={_global.cid}&uid={_global.uid}&unitidx={_global.lessonIndex.index(lesson)}&classid={_global.classid}",
+                    headers=infoHeaders,
+                )
+                if "异常" in response.text or "出错了" in response.text:
+                    state.task_status = "error"
+                    log_message(
+                        f"获取课程 {lesson} 详细列表失败: {response.text}", "APPERR"
+                    )
+                    return
+                for section in response.json()["info"]:  # 获取课程的小节列表并刷课
+                    # log_message(f"获取到课程 {lesson} 的详细信息 {response.json()}", "APPDEBUG")
+                    if section["isvisible"] == "false":
+                        log_message(f'跳过未开放课程 {section["location"]}', "APPERR")
+                        log_message(f"课程 {lesson} 的返回信息：{section}", "APPDEBUG")
+                    elif "未" in section["iscomplete"]:
+                        log_message(f'正在完成 {section["location"]}', "APPINFO")
+                        if isinstance(self.rate, str):
+                            crate = self.rate
+                        else:
+                            crate = str(random.randint(*self.rate))
+                        data = (
+                            '{"cmi":{"completion_status":"completed","interactions":[],"launch_data":"","progress_measure":"1","score":{"scaled":"'
+                            + crate
+                            + '","raw":"100"},"session_time":"0","success_status":"unknown","total_time":"0","mode":"normal"},"adl":{"data":[]},"cci":{"data":[],"service":{"dictionary":{"headword":"","short_cuts":""},"new_words":[],"notes":[],"writing_marking":[],"record":{"files":[]},"play":{"offline_media_id":"9999"}},"retry_count":"0","submit_time":""}}[INTERACTIONINFO]'
+                        )
+                        id = section["id"]
+                        # 第一种刷课方法
+                        client.post(
+                            "https://welearn.sflep.com/Ajax/SCO.aspx",
+                            data={
+                                "action": "startsco160928",
+                                "cid": _global.cid,
+                                "scoid": id,
+                                "uid": _global.uid,
+                            },
+                            headers={
+                                "Referer": f"https://welearn.sflep.com/Student/StudyCourse.aspx?cid={_global.cid}&classid={_global.classid}&sco={id}"
+                            },
+                        )
+                        response = client.post(
+                            "https://welearn.sflep.com/Ajax/SCO.aspx",
+                            data={
+                                "action": "setscoinfo",
+                                "cid": _global.cid,
+                                "scoid": id,
+                                "uid": _global.uid,
+                                "data": data,
+                                "isend": "False",
+                            },
+                            headers={
+                                "Referer": f"https://welearn.sflep.com/Student/StudyCourse.aspx?cid={_global.cid}&classid={_global.classid}&sco={id}"
+                            },
+                        )
+                        if '"ret":0' in response.text:
+                            log_message(
+                                f"刷课结果：以 {crate}% 的正确率使用“第一类刷课法”完成了课程 {section['location']}",
+                                "APPINFO",
+                            )
+                            # 第 N 类刷课法 neta 了高数的第 N 类积分法
+                            state.progress = {
+                                "current": state.progress["current"] + 1,
+                                "total": len(
+                                    self.lessonIds * len(response.json()["info"])
+                                ),
+                            }
+                            # 这里假设了每个课程的节数是一样的，反正看起来好像差不多，应该无所谓
+                            continue
+                        else:  # 第二种刷课法
+                            response = client.post(
+                                "https://welearn.sflep.com/Ajax/SCO.aspx",
+                                data={
+                                    "action": "savescoinfo160928",
+                                    "cid": _global.cid,
+                                    "scoid": id,
+                                    "uid": _global.uid,
+                                    "progress": "100",
+                                    "crate": crate,
+                                    "status": "unknwon",
+                                    "cstatus": "completed",
+                                    "trycount": "0",
+                                },
+                                headers={
+                                    "Referer": f"https://welearn.sflep.com/Student/StudyCourse.aspx?cid={_global.cid}&classid={_global.classid}&sco={id}"
+                                },
+                            )
+                            if '"ret":0' in response.text:
+                                log_message(
+                                    f"刷课结果：以 {crate}% 的正确率使用“第二类刷课法”完成了课程 {section['location']}",
+                                    "APPINFO",
+                                )
+                                state.progress = {
+                                    "current": state.progress["current"] + 1,
+                                    "total": len(
+                                        self.lessonIds * len(response.json()["info"])
+                                    ),
+                                }
+                                continue
+                    else:
+                        state.progress = {
+                            "current": state.progress["current"] + 1,
+                            "total": len(self.lessonIds * len(response.json()["info"])),
+                        }
+                        log_message(f'跳过已完成课程 {section["location"]}', "APPINFO")
+                log_message(f"课程 {lesson} 刷课完成", "APPINFO")
             state.task_status = "completed"
         except Exception as e:
             log_message(f"刷课任务出错: {str(e)}")
+            state.progress = {
+                "current": self.lessonIds * 100,
+                "total": len(self.lessonIds * len(response.json()["info"])),
+            }
             state.task_status = "error"
 
 
 class AwayFromKeyboardThread(threading.Thread):
     """挂机刷时长线程"""
 
-    def __init__(self, unit_idx: int, duration: Union[int, Tuple[int, int]]):
+    def __init__(self, lessonIds: List[str], duration: str):
         super().__init__()
-        self.unit_idx = unit_idx
+        self.lessonIds = lessonIds
         self.duration = duration
         self.daemon = True
+        self.wrong_lessons = []
+        self.max_threads = 16
+        self.retry_delay = 3
+        self.max_retries = 5
+
+    def _http_request_with_retry(self, method, url, **kwargs):
+        """带有重试机制的 HTTP 请求"""
+        for attempt in range(self.max_retries):
+            try:
+                response = client.request(method, url, **kwargs)
+                response.raise_for_status()
+                return response
+            except (httpx.TimeoutException, httpx.HTTPError, Exception) as e:
+                if attempt < self.max_retries - 1:
+                    log_message(f"请求 {url} 失败 ({str(e)})，{self.retry_delay} 秒后重试...", "APPERR")
+                    time.sleep(self.retry_delay)
+                else:
+                    log_message(f"请求 {url} 失败，已达最大重试次数", "APPERR")
+                    raise
+
+    def _process_section(self, section):
+        """处理单个课程小节"""
+        try:
+            log_message(f'开始处理: {section["location"]}', "APPINFO")
+            scoid = section["id"]
+            url = "https://welearn.sflep.com/Ajax/SCO.aspx"
+
+            # 获取初始学习状态
+            response = self._http_request_with_retry(
+                "POST",
+                url,
+                data={
+                    "action": "getscoinfo_v7",
+                    "uid": _global.uid,
+                    "cid": _global.cid,
+                    "scoid": scoid,
+                },
+                headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
+            )
+
+            if "学习数据不正确" in response.text:
+                self._http_request_with_retry(
+                    "POST",
+                    url,
+                    data={
+                        "action": "startsco160928",
+                        "uid": _global.uid,
+                        "cid": _global.cid,
+                        "scoid": scoid,
+                    },
+                    headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
+                )
+
+            back = json.loads(response.text)["comment"]
+            if "cmi" in back:
+                cmi = json.loads(back)["cmi"]
+                session_time = cmi.get("session_time", "0")
+                total_time = cmi.get("total_time", "0")
+            else:
+                session_time = total_time = "0"
+
+            learn_time = random.randint(*map(int, self.duration.split("-"))) if "-" in self.duration else int(self.duration)
+
+            self._http_request_with_retry(
+                "POST",
+                url,
+                data={
+                    "action": "keepsco_with_getticket_with_updatecmitime",
+                    "uid": _global.uid,
+                    "cid": _global.cid,
+                    "scoid": scoid,
+                    "session_time": session_time,
+                    "total_time": total_time,
+                },
+                headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
+            )
+
+            for current_time in range(1, learn_time + 1):
+                time.sleep(1)
+                if current_time % 60 == 0:
+                    self._http_request_with_retry(
+                        "POST",
+                        url,
+                        data={
+                            "action": "keepsco_with_getticket_with_updatecmitime",
+                            "uid": _global.uid,
+                            "cid": _global.cid,
+                            "scoid": scoid,
+                            "session_time": str(int(session_time) + current_time),
+                            "total_time": str(int(total_time) + current_time),
+                        },
+                        headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
+                    )
+
+            self._http_request_with_retry(
+                "POST",
+                url,
+                data={
+                    "action": "savescoinfo160928",
+                    "cid": _global.cid,
+                    "scoid": scoid,
+                    "uid": _global.uid,
+                    "progress": "100",
+                    "crate": "100",
+                    "status": "unknown",
+                    "cstatus": "completed",
+                    "trycount": "0",
+                },
+                headers={"Referer": f"https://welearn.sflep.com/Student/StudyCourse.aspx?cid={_global.cid}&classid={_global.classid}&sco={scoid}"},
+            )
+
+            state.progress["current"] += 1
+            log_message(f'完成学习: {section["location"]} 耗时: {learn_time}秒', "APPINFO")
+
+        except Exception as e:
+            self.wrong_lessons.append(section["location"])
+            log_message(f'处理失败: {section["location"]} - {str(e)}', "APPERR")
 
     def run(self):
+        """线程主函数"""
         try:
             state.task_status = "away_from_keyboard"
-            # 这里添加具体的挂机逻辑
-            # 示例进度更新
-            total = (
-                random.randint(*self.duration)
-                if isinstance(self.duration, tuple)
-                else self.duration
-            )
-            for i in range(total):
-                if state.stop_event.is_set():
-                    break
-                state.progress = {"current": i, "total": total}
-                time.sleep(1)
-            state.task_status = "completed"
-        except Exception as e:
-            log_message(f"挂机任务出错: {str(e)}")
-            state.task_status = "error"
+            total_lessons = 0
 
+            for lesson_id in self.lessonIds:
+                unit_index = _global.lessonIndex.index(lesson_id)
+                while not state.stop_event.is_set():
+                    try:
+                        response = self._http_request_with_retry(
+                            "GET",
+                            f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={_global.cid}&uid={_global.uid}&unitidx={unit_index}&classid={_global.classid}",
+                            headers={"Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}"},
+                        )
+                        sections = response.json().get("info", [])
+                        break
+                    except Exception:
+                        time.sleep(self.retry_delay)
+
+                if state.stop_event.is_set():
+                    return
+
+                total_lessons += len(sections)
+                state.progress["total"] = total_lessons
+
+                thread_pool = []
+                for section in sections:
+                    if state.stop_event.is_set():
+                        break
+                    if section["isvisible"] == "false":
+                        continue
+                    while len(thread_pool) >= self.max_threads:
+                        thread_pool = [t for t in thread_pool if t.is_alive()]
+                        time.sleep(1)
+                        if state.stop_event.is_set():
+                            break
+                    t = threading.Thread(target=self._process_section, args=(section,))
+                    t.start()
+                    thread_pool.append(t)
+                for t in thread_pool:
+                    t.join()
+
+            state.task_status = "completed"
+            log_message(f"刷时长任务完成，失败章节数: {len(self.wrong_lessons)}", "APPINFO")
+        except Exception as e:
+            state.task_status = "error"
+            log_message(f"刷时长任务异常终止: {str(e)}", "APPERR")
 
 # ====================== 启动配置 ======================
 if __name__ == "__main__":
