@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="zh-cn">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport"
+        content="width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>WelearnBrainBurst | GamerNoTitle</title>
+    <style>
+        html,
+        body {
+            height: 100%;
+            overflow: hidden;
+            margin: 0;
+            -webkit-text-size-adjust: none;
+        }
+
+        :not(:defined) {
+            display: none;
+        }
+
+        .status-card {
+            margin: 16px;
+            padding: 16px;
+            background: var(--md-sys-color-surface-container);
+            border-radius: 12px;
+        }
+    </style>
+    <link rel="stylesheet" href="/static/css/sober-theme.css">
+</head>
+
+<body>
+    <s-page theme="auto">
+        <!-- 侧边导航 -->
+        <s-drawer>
+            <div slot="start" style="width: auto;">
+                <s-navigation mode="rail" onchange="handleNavChange(event)">
+                    <s-icon-button slot="start" type="filled-tonal">
+                        <img src="/static/img/cat.svg" alt="Logo" style="width: 40px; height: 40px;">
+                    </s-icon-button>
+
+                    <s-navigation-item selected="true" data-page="dashboard">
+                        <svg slot="icon" viewBox="0 -960 960 960">
+                            <path
+                                d="M520-600v-240h320v240H520ZM120-440v-400h320v400H120Zm400 320v-400h320v400H520Zm-400 0v-240h320v240H120Zm80-400h160v-240H200v240Zm400 320h160v-240H600v240Zm0-480h160v-80H600v80ZM200-200h160v-80H200v80Zm160-320Zm240-160Zm0 240ZM360-280Z" />
+                        </svg>
+                        <div slot="text">控制面板</div>
+                    </s-navigation-item>
+
+                    <s-navigation-item id="shutdown">
+                        <svg slot="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960">
+                            <path
+                                d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z">
+                            </path>
+                        </svg>
+                        <div slot="text">退出助手</div>
+                    </s-navigation-item>
+                    <div slot="end" style="display: flex;align-items: flex-end; padding: 16px 0;">
+                        <s-dialog>
+                            <s-icon-button type="outlined" slot="trigger">
+                                <svg viewBox="0 -960 960 960">
+                                    <path
+                                        d="M440-280h80v-240h-80v240Zm40-320q17 0 28.5-11.5T520-640q0-17-11.5-28.5T480-680q-17 0-28.5 11.5T440-640q0 17 11.5 28.5T480-600Zm0 520q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Zm0-320Z">
+                                    </path>
+                                </svg>
+                            </s-icon-button>
+                            <div slot="headline">关于</div>
+                            <div slot="text">
+                                <h4>WelearnBrainBurst</h4>
+                                <p>
+                                    WelearnBrainBurst 是一个 WELearn 助手，旨在帮助用户轻松地使用 WELearn，同时提供一些**额外**的实用功能。
+                                </p>
+                                <h4>免责声明</h4>
+                                <p>
+                                    本项目仅供学习交流使用，不得用于任何商业用途，否则后果自负。
+                                </p>
+                                <s-divider></s-divider>
+                                <p>
+                                    © 2024
+                                    <a href="https://github.com/GamerNoTitle">GamerNoTitle</a>. All
+                                    rights reserved.
+                                </p>
+                            </div>
+                            <s-button type="text" slot="action"> 关闭 </s-button>
+                        </s-dialog>
+                    </div>
+
+                </s-navigation>
+            </div>
+
+            <!-- 主内容区 -->
+            <s-appbar>
+                <s-icon-button slot="navigation" onclick="document.querySelector('s-drawer').toggle()">
+                    <s-icon name="menu"></s-icon>
+                </s-icon-button>
+                <div slot="headline">WelearnBrainBurst</div>
+            </s-appbar>
+
+            <s-linear-progress indeterminate="true" id="loading" style="display: none;"></s-linear-progress>
+
+            <!-- 控制面板 -->
+            <s-scroll-view>
+                <main style="display: block; margin: 24px; margin-left: 15%; max-width: 70%;">
+                    <s-card style="display: block;
+                    padding: 24px;
+                    width: 100%;
+                    max-width: 100%;
+                    margin-top: 24px;">
+                        <div slot="headline">账号管理</div>
+                        <div slot="text">
+                            <s-text-field style="display: grid; width: auto; margin-bottom: 24px; margin-top: 24px;"
+                                label="Cookie" name="cookie-input" id="cookie-input"></s-text-field>
+                            <div align="right">
+                                <p id="lastModified">上次保存：未知</p>
+                                <p id="onlineStatus">在线状态</p>
+                                <s-button id="save-cookie-btn">保存 Cookie 并登录</s-button>
+                            </div>
+                        </div>
+                    </s-card>
+
+                    <s-card style="display: none;
+                    padding: 24px;
+                    width: 100%;
+                    max-width: 100%;
+                    margin-top: 24px;" id="dashboard">
+                        <div slot="headline" id="welcomeMessage"></div>
+                        <div slot="text">
+                            <s-table
+                                style="max-width: 100%; width: 100%; margin-top: 24px; margin-bottom: 24px; text-align: center;">
+                                <s-thead>
+                                    <s-tr>
+                                        <s-th>课程编号</s-th>
+                                        <s-th>课程名称</s-th>
+                                        <s-th>完成进度</s-th>
+                                        <s-th>操作</s-th>
+                                    </s-tr>
+                                </s-thead>
+                                <s-tbody id="course-list">
+                                    <!-- 课程列表 -->
+                                </s-tbody>
+                            </s-table>
+                            <div id="course-list-container" style="display: none;">
+                                <s-divider> 单元列表 </s-divider>
+                                <s-table
+                                    style="max-width: 100%; width: 100%; margin-top: 24px; margin-bottom: 24px; text-align: center;">
+                                    <s-thead>
+                                        <s-tr>
+                                            <s-th>单元编号</s-th>
+                                            <s-th>课程名称</s-th>
+                                            <s-th>开放状态</s-th>
+                                            <s-th>选择</s-th>
+                                        </s-tr>
+                                    </s-thead>
+                                    <s-tbody id="lession-list">
+                                        <!-- 单元列表 -->
+                                    </s-tbody>
+                                </s-table>
+                            </div>
+                            <div id='params-setup' style="display: none;">
+                                <s-divider> 课程参数设置 </s-divider>
+                                <s-text-field style="display: grid; width: auto; margin-top: 24px; margin-bottom: 24px;"
+                                    label="正确率" id="correct-rate"></s-text-field>
+                                <s-text-field style="display: grid; width: auto; margin-top: 24px; margin-bottom: 24px;"
+                                    label="挂机时间" id="idle-time"></s-text-field>
+                                <div align="center">
+                                    <p>正确率表示单元的每一节的正确率应该为多少，可以是确切的数值也可以是范围，例如 98 表示 98% 正确率，98-100 表示 98%-100% 正确率之间随机
+                                    </p>
+                                    <p>挂机时间表示单元的每一节要挂机多久，可以是确切的数值也可以是范围，例如 300 表示每一节都挂机 5 分钟，180-300 表示每一节挂机 180 秒到 300
+                                        秒不等的时间</p>
+                                </div>
+                                <div align="right" style="margin-top: 24px;">
+                                    <s-checkbox id="freeToUse">
+                                        <b>我同意：本项目仅供学习交流使用，不得用于任何商业用途，否则后果自负</b>
+                                    </s-checkbox>
+                                    <br>
+                                    <s-checkbox id="disclaimer">
+                                        <b>我同意：使用本项目造成的后果由使用者自行承担，作者不承担任何责任</b>
+                                    </s-checkbox>
+                                    <br>
+                                    <s-tooltip style="margin-right: 24px; margin-top: 24px;">记得先设置好正确率！！
+                                        <s-button id="start-brain-burst" slot="trigger">
+                                            开始刷课！
+                                        </s-button>
+                                    </s-tooltip>
+                                    <s-tooltip style="margin-top: 24px;">记得先设置好挂机时间！！
+                                        <s-button id="start-away-from-keyboard" slot="trigger">
+                                            开始挂机！
+                                        </s-button>
+                                    </s-tooltip>
+                                </div>
+                            </div>
+                        </div>
+                    </s-card>
+
+
+
+                </main>
+            </s-scroll-view>
+        </s-drawer>
+    </s-page>
+
+    <script src="https://unpkg.com/sober@1.0.6/dist/sober.min.js"></script>
+    <script>
+        let autoRefreshInterval = null;
+        let selectedLessions = new Set(); // 存储选中的单元ID
+
+        // 添加/移除单元ID
+        function addLession(lessionId) {
+            const checkbox = document.querySelector(`s-checkbox[onchange*="${lessionId}"]`);
+            if (checkbox.checked) {
+                selectedLessions.add(lessionId);
+            } else {
+                selectedLessions.delete(lessionId);
+            }
+        }
+
+        // 验证正确率格式（0-100 或 A-B）
+        function validateRate(input) {
+            if (/^\d+$/.test(input)) {
+                const num = parseInt(input);
+                return num >= 0 && num <= 100;
+            }
+            if (/^\d+-\d+$/.test(input)) {
+                const [a, b] = input.split('-').map(Number);
+                return a >= 0 && b <= 100 && a < b;
+            }
+            return false;
+        }
+
+        // 验证时间格式（正整数或 A-B）
+        function validateTime(input) {
+            if (/^\d+$/.test(input)) {
+                return parseInt(input) > 0;
+            }
+            if (/^\d+-\d+$/.test(input)) {
+                const [a, b] = input.split('-').map(Number);
+                return a > 0 && b > 0 && a < b;
+            }
+            return false;
+        }
+
+        // 页面导航处理
+        function handleNavChange(event) {
+            const pages = ['dashboard', 'courses', 'settings'];
+            pages.forEach(page => {
+                document.getElementById(page).style.display =
+                    event.target.selectedIndex === pages.indexOf(page) ? 'block' : 'none';
+            });
+        }
+
+        // 更新状态显示
+        async function updateStatus() {
+            try {
+                const res = await fetch('/api/getStatus');
+                const { success, status, progress } = await res.json();
+
+                if (success) {
+                    document.getElementById('current-status').textContent = status;
+                    document.getElementById('task-progress').value =
+                        progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
+                    document.getElementById('progress-text').textContent =
+                        `${progress.current}/${progress.total}`;
+                }
+            } catch (error) {
+                console.error('状态更新失败:', error);
+            }
+        }
+
+        // 获取日志
+        async function fetchLogs() {
+            const res = await fetch('/api/getLog');
+            const { logs } = await res.json();
+            const logOutput = document.getElementById('log-output');
+            logOutput.textContent = logs;
+            logOutput.scrollTop = logOutput.scrollHeight;
+        }
+
+        // 开始任务
+        async function startTask(taskType) {
+            const res = await fetch(`/api/${taskType}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ /* 参数 */ })
+            });
+
+            if (res.ok) {
+                if (!autoRefreshInterval) {
+                    autoRefreshInterval = setInterval(async () => {
+                        await updateStatus();
+                        await fetchLogs();
+                    }, 2000);
+                }
+            }
+        }
+
+        // 停止任务
+        async function stopTasks() {
+            await fetch('/api/stop', { method: 'POST' });
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+            }
+            await updateStatus();
+        }
+
+        // 课程加载
+        async function loadCourses() {
+            document.getElementById('loading').style.display = 'block';
+            try {
+                const res = await fetch('/api/getCourses');
+                const data = await res.json(); // 必须加 await
+                console.log('接口响应数据:', data); // 调试用
+
+                // 验证数据格式
+                if (!data.courses) {
+                    throw new Error("接口未返回 courses 字段");
+                }
+
+                const { courses, cid, classid, uid } = data;
+                const tbody = document.getElementById('course-list');
+
+                // 动态生成表格行
+                tbody.innerHTML = courses.map(course => `
+            <s-tr>
+                <s-td>${course.cid}</s-td>
+                <s-td>${course.name}</s-td>
+                <s-td>
+                    ${course.per}% 
+                    <s-linear-progress 
+                        animated="true" 
+                        ${course.per ? `value="${course.per}"` : 'indeterminate="true"'}
+                    ></s-linear-progress>
+                </s-td>
+                <s-td>
+                    <s-button 
+                        type="filled-tonal" 
+                        class="course-select-btn" 
+                        data-course-id="${course.cid}"
+                    >选择</s-button>
+                </s-td>
+            </s-tr>
+        `).join('');
+
+            } catch (error) {
+                console.error('加载课程失败:', error);
+            }
+            document.getElementById('loading').style.display = 'none';
+        }
+        // Cookie操作
+        async function saveCookie() {
+            const cookie = document.getElementById('cookie-input').value;
+            localStorage.setItem('cookie', cookie);
+            localStorage.setItem('lastModified', new Date().toLocaleString());
+            document.getElementById('lastModified').textContent = `上次保存：${localStorage.getItem('lastModified')}`;
+            await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cookies: cookie })
+            });
+        }
+
+        function getComponentValuesByName(name) {
+            const elements = document.querySelectorAll(`[name="${name}"]`);
+            const results = [];
+
+            elements.forEach(element => {
+                const tagName = element.tagName.toLowerCase();
+
+                if (tagName === 's-text-field') {
+                    // 正确获取 SoberJS 文本字段的值
+                    results.push(element.value ? element.value.trim() : '');
+
+                } else if (tagName === 's-picker') {
+                    // 保持原有选择器逻辑
+                    const selectedItem = element.querySelector('s-picker-item[selected]');
+                    if (selectedItem) {
+                        results.push({
+                            value: selectedItem.getAttribute('value'),
+                            text: selectedItem.textContent.trim()
+                        });
+                    }
+                }
+            });
+
+            return results.length === 1 ? results[0] : results;
+        }
+
+        function setComponentValuesByName(name, value) {
+            document.querySelectorAll(`[name="${name}"]`).forEach(element => {
+                if (element.tagName.toLowerCase() === 's-text-field') {
+                    // 精准定位输入元素的 3 层穿透
+                    const input = element.shadowRoot
+                        ?.querySelector('.view')          // 第一层容器
+                        ?.querySelector('[part="input"]') // 含 part 属性的真实输入框
+
+                    // 双重保险赋值方案
+                    if (input) {
+                        /* 核心赋值逻辑 */
+                        input.value = value; // 直接修改底层输入框
+
+                        // 触发完整事件链 (模拟真实用户输入)
+                        input.dispatchEvent(new Event('focus', { bubbles: true, composed: true }));
+                        input.dispatchEvent(new Event('input', {
+                            bubbles: true,
+                            composed: true, // 必须！穿透 Shadow DOM
+                            detail: { data: value }
+                        }));
+                        input.dispatchEvent(new Event('blur', { bubbles: true, composed: true }));
+
+                        // 同步框架数据层
+                        element.value = value; // 同时更新组件属性
+                    }
+                }
+            });
+        }
+
+        function displayCookieAndLastModified() {
+            const cookie = localStorage.getItem('cookie');
+            const lastModified = localStorage.getItem('lastModified');
+            if (cookie) {
+                document.getElementById('cookie-input').value = cookie;
+            }
+            if (lastModified) {
+                document.getElementById('lastModified').textContent = `上次保存：${lastModified}`;
+            }
+        }
+
+        async function getCurrentStatus() {
+            document.getElementById('loading').style.display = 'block';
+            await fetch('/api/status') // 获取当前状态
+                .then(res => res.json())
+                .then(data => {
+                    return {
+                        status: data.status,
+                        progress: {
+                            current: data.progress.current,
+                            total: data.progress.total
+                        },
+                        activeThreads: data.activeThreads
+                    };
+                });
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        async function checkLogon() {
+            let currentStatus = {};
+            currentStatus = getCurrentStatus();
+            if (currentStatus.status != 'nologon') {
+                document.getElementById('dashboard').style.display = 'block';
+                await fetch('/api/getUserInfo') // 获取用户信息
+                    .then(res => res.json())
+                    .then(data => {
+                        document.getElementById('welcomeMessage').textContent = `欢迎回来，${data.name} (${data.student_id})！`;
+                        document.getElementById('onlineStatus').textContent = `在线状态：🟢 已登录`;
+                    });
+            }
+            else {
+                document.getElementById('dashboard').style.display = 'none';
+                document.getElementById('onlineStatus').textContent = `在线状态：🔴 未登录`;
+            }
+            return currentStatus == 'nologon' ? false : true;
+        }
+
+        async function selectCourse(cid) {
+            document.getElementById('loading').style.display = 'block';
+            await fetch('/api/getLessions?cid=' + cid)
+                .then(res => res.json())
+                .then(data => {
+                    console.log(data)
+                    const tbody = document.getElementById('lession-list');
+                    tbody.innerHTML = data.lessions.map(lession => `
+        <s-tr>
+          <s-td>${lession.id}</s-td>
+          <s-td>${lession.name}</s-td>
+          <s-td>${lession.visible ? "已开放" : "未开放"}</s-td>
+          <s-td>
+            <s-checkbox onchange=addLession(${lession.id})>我要刷这个单元！</s-checkbox>
+          </s-td>
+        </s-tr>
+                    `).join('');
+                });
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('course-list-container').style.display = 'block';
+            document.getElementById('params-setup').style.display = 'block';
+        }
+
+        async function handleTaskStart(taskType) {
+            // 验证必填项
+            if (!document.getElementById('freeToUse').checked ||
+                !document.getElementById('disclaimer').checked) {
+                alert('请先同意免责声明！');
+                return;
+            }
+
+            // 验证单元选择
+            if (selectedLessions.size === 0) {
+                alert('请至少选择一个单元！');
+                return;
+            }
+
+            // 获取参数
+            const params = {
+                lessionIds: Array.from(selectedLessions),
+                type: taskType
+            };
+
+            // 类型特定验证
+            if (taskType === 'brain_burst') {
+                const rate = document.getElementById('correct-rate').value;
+                if (!validateRate(rate)) {
+                    alert('正确率格式错误！\n示例：98 或 95-100');
+                    return;
+                }
+                params.rate = rate;
+            } else {
+                const time = document.getElementById('idle-time').value;
+                if (!validateTime(time)) {
+                    alert('时间格式错误！\n示例：300 或 180-300');
+                    return;
+                }
+                params.time = time;
+            }
+
+            // 发送请求
+            try {
+                document.getElementById('loading').style.display = 'block';
+                const res = await fetch('/api/startTask', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params)
+                });
+
+                if (!res.ok) throw new Error('请求失败');
+                alert('任务已开始！');
+            } catch (error) {
+                console.error('任务启动失败:', error);
+                alert('任务启动失败，请查看控制台');
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            displayCookieAndLastModified();
+            if (checkLogon()) {
+                loadCourses();
+            };
+            // loadCourses();
+            // updateStatus();
+            // fetchLogs();
+        });
+
+        document.getElementById('save-cookie-btn').addEventListener('click', saveCookie);
+
+        document.getElementById('start-brain-burst').addEventListener('click', () =>
+            handleTaskStart('brain_burst'));
+
+        document.getElementById('start-away-from-keyboard').addEventListener('click', () =>
+            handleTaskStart('away_from_keyboard'));
+
+        document.getElementById('course-list').addEventListener('click', function (e) {
+            const btn = e.target.closest('.course-select-btn');
+            if (btn) selectCourse(btn.dataset.courseId);
+        });
+
+
+    </script>
+</body>
+
+</html>
