@@ -117,6 +117,17 @@
                                 <s-button id="save-cookie-btn">保存 Cookie 并登录</s-button>
                             </div>
                         </div>
+                        <s-divider style="margin-top: 24px; margin-bottom: 24px"> 任务状态 </s-divider>
+                        <div style="padding-left: 24px;">
+                            <h2>任务状态</h2>
+                            <h3 id="current-status">⚪ 未知 (unknown)</h3>
+                            <h4 id="progress-text"></h4>
+                            <s-linear-progress indeterminate="true" id="indetermined-status"
+                                style="margin-top: 16px; margin-bottom: 16px;"></s-linear-progress>
+                            <s-linear-progress id="task-status" animated="true"
+                                style="margin-top: 16px; margin-bottom: 16px;" value="0"></s-linear-progress>
+                        </div>
+
                     </s-card>
 
                     <s-card style="display: none;
@@ -252,11 +263,40 @@
         // 更新状态显示
         async function updateStatus() {
             try {
-                const res = await fetch('/api/getStatus');
+                const res = await fetch('/api/status');
                 const { success, status, progress } = await res.json();
 
                 if (success) {
                     document.getElementById('current-status').textContent = status;
+                    if (status === 'idle' || status === 'error' || status === 'nologon') {
+                        document.getElementById('indetermined-status').style.display = 'block';
+                        document.getElementById('task-status').style.display = 'none';
+                        if (status === 'nologon') {
+                            document.getElementById('current-status').textContent = '🔴 未登录 (nologon)';
+                            document.getElementById('progress-text').textContent = '当前运行状态：请先登录';
+                        } else if (status === 'idle') {
+                            document.getElementById('current-status').textContent = '🟢 正在待机 (idle)';
+                            document.getElementById('progress-text').textContent = '当前运行状态：正在待机，等待任务';
+                        } else if (status === 'error') {
+                            document.getElementById('current-status').textContent = '🔴 错误 (error)';
+                            document.getElementById('progress-text').textContent = '当前运行状态：出现错误，请检查日志';
+                        }
+                    }
+                    else {
+                        if (status === 'brain_burst') {
+                            document.getElementById('current-status').textContent = '🟡 正在刷课 (brain_burst)';
+                            document.getElementById('progress-text').textContent = `当前运行状态：正在刷课，完成情况 ${progress.current}/${progress.total} (${(progress.current / progress.total * 100).toFixed(2)}%)`;
+                        } else if (status === 'away_from_keyboard') {
+                            document.getElementById('current-status').textContent = '🟡 正在挂机 (away_from_keyboard)'
+                            document.getElementById('progress-text').textContent = `当前运行状态：正在挂机，完成情况 ${progress.current}/${progress.total} (${(progress.current / progress.total * 100).toFixed(2)}%)`;
+                        } else if (status === 'completed') {
+                            document.getElementById('current-status').textContent = '🟢 已完成 (completed)';
+                            document.getElementById('progress-text').textContent = `当前运行状态：已完成，完成情况 ${progress.current}/${progress.total} (${(progress.current / progress.total * 100).toFixed(2)}%)`;
+                        }
+                        document.getElementById('indetermined-status').style.display = 'none';
+                        document.getElementById('task-status').style.display = 'block';
+                        document.getElementById('task-status').value = progress.current / progress.total * 100;
+                    }
                     document.getElementById('task-progress').value =
                         progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
                     document.getElementById('progress-text').textContent =
@@ -359,7 +399,10 @@
                 body: JSON.stringify({ cookies: cookie })
             });
             document.getElementById('loading').style.display = 'none';
-            checkLogon();
+            if (checkLogon()) {
+                loadCourses();
+            }
+
         }
 
         function displayCookieAndLastModified() {
@@ -508,9 +551,9 @@
             if (checkLogon()) {
                 loadCourses();
             };
-            // loadCourses();
-            // updateStatus();
-            // fetchLogs();
+            setInterval(() => {
+                updateStatus();
+            }, 1000);
         });
 
         document.getElementById('save-cookie-btn').addEventListener('click', saveCookie);

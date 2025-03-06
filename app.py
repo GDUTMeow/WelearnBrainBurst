@@ -362,7 +362,7 @@ def start_task():
     try:
         if not state.task_status in ["idle", "completed", "error"]:
             return jsonify(success=False, error="已有任务在进行中")
-
+        state.progress = {"current": 0, "total": 0}
         data = request.json
         log_message(data)
         task_type = data["type"]
@@ -405,6 +405,7 @@ def get_status():
             "status": state.task_status,
             "progress": state.progress,
             "activeThreads": len(state.active_threads),
+            "success": True
         }
     )
 
