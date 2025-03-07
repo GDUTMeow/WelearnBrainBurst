@@ -518,30 +518,38 @@ class BrainBurstThread(threading.Thread):
                 "Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}",
             }
             for lesson in self.lessonIds:  # 获取课程详细列表
-                resp = client.get(
+                response = client.get(
                     f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={_global.cid}&uid={_global.uid}&unitidx={_global.lessonIndex.index(lesson)}&classid={_global.classid}",
                     headers=infoHeaders,
                 )
-                if "异常" in resp.text or "出错了" in resp.text:
+                resp = response
+                if "异常" in response.text or "出错了" in response.text:
                     state.task_status = "error"
                     log_message(
-                        f"获取课程 {lesson} 详细列表失败: {resp.text}", "APPERR"
+                        f"获取课程 {lesson} 详细列表失败: {response.text}", "APPERR"
                     )
                     return
-                for section in resp.json()["info"]:  # 获取课程的小节列表并刷课
-                    log_message(f"获取到课程 {lesson} 的详细信息 {resp.json()}", "APPDEBUG")
+                state.progress = {
+                    "current": state.progress["current"],
+                    "total": len(self.lessonIds) * len(resp.json()["info"]),
+                }
+
+                for section in response.json()["info"]:  # 获取课程的小节列表并刷课
+                    log_message(
+                        f"获取到课程 {lesson} 的详细信息 {response.json()}", "APPDEBUG"
+                    )
                     if section["isvisible"] == "false":
                         log_message(f'跳过未开放课程 {section["location"]}', "APPERR")
                         log_message(f"课程 {lesson} 的返回信息：{section}", "APPDEBUG")
                     elif "未" in section["iscomplete"]:
                         log_message(f'正在完成 {section["location"]}', "APPINFO")
-                        if isinstance(self.rate, str):
+                        if isinstance(self.rate, int):
                             crate = self.rate
                         else:
                             crate = str(random.randint(*self.rate))
                         data = (
                             '{"cmi":{"completion_status":"completed","interactions":[],"launch_data":"","progress_measure":"1","score":{"scaled":"'
-                            + crate
+                            + str(crate)
                             + '","raw":"100"},"session_time":"0","success_status":"unknown","total_time":"0","mode":"normal"},"adl":{"data":[]},"cci":{"data":[],"service":{"dictionary":{"headword":"","short_cuts":""},"new_words":[],"notes":[],"writing_marking":[],"record":{"files":[]},"play":{"offline_media_id":"9999"}},"retry_count":"0","submit_time":""}}[INTERACTIONINFO]'
                         )
                         id = section["id"]
@@ -580,9 +588,8 @@ class BrainBurstThread(threading.Thread):
                             # 第 N 类刷课法 neta 了高数的第 N 类积分法
                             state.progress = {
                                 "current": state.progress["current"] + 1,
-                                "total": len(
-                                    self.lessonIds * len(response.json()["info"])
-                                ),
+                                "total": len(self.lessonIds)
+                                * len(response.json()["info"]),
                             }
                             # 这里假设了每个课程的节数是一样的，反正看起来好像差不多，应该无所谓
                             continue
@@ -611,15 +618,14 @@ class BrainBurstThread(threading.Thread):
                                 )
                                 state.progress = {
                                     "current": state.progress["current"] + 1,
-                                    "total": len(
-                                        self.lessonIds * len(response.json()["info"])
-                                    ),
+                                    "total": len(self.lessonIds)
+                                    * len(response.json()["info"]),
                                 }
                                 continue
                     else:
                         state.progress = {
                             "current": state.progress["current"] + 1,
-                            "total": len(self.lessonIds * len(response.json()["info"])),
+                            "total": len(self.lessonIds) * len(response.json()["info"]),
                         }
                         log_message(f'跳过已完成课程 {section["location"]}', "APPINFO")
                 log_message(f"课程 {lesson} 刷课完成", "APPINFO")
@@ -642,9 +648,9 @@ class AwayFromKeyboardThread(threading.Thread):
         self.duration = duration
         self.daemon = True
         self.wrong_lessons = []
-        self.max_threads = 16
+        self.max_threads = 64
         self.retry_delay = 3
-        self.max_retries = 5
+        self.max_retries = 100
 
     def _http_request_with_retry(self, method, url, **kwargs):
         """带有重试机制的 HTTP 请求"""
