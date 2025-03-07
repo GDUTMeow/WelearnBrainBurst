@@ -62,17 +62,22 @@
                             <div slot="text">
                                 <h4>WelearnBrainBurst</h4>
                                 <p>
-                                    WelearnBrainBurst 是一个 WELearn 助手，旨在帮助用户轻松地使用 WELearn，同时提供一些**额外**的实用功能。
+                                    WelearnBrainBurst 是一个 WELearn 助手，旨在帮助用户轻松地使用 WELearn，同时提供一些<b>额外</b>的实用功能。
+                                </p>
+                                <h4>为什么叫 WelearnBrainBurst</h4>
+                                <p>
+                                    在做这个程序的时候，就在想名字要取什么，然后想到了以前看过的番《加速世界》，里面加入 Burst Link 的口令就是 Brain
+                                    Burst，就拿过来用了（话说还有人记得加速世界嘛）
                                 </p>
                                 <h4>免责声明</h4>
                                 <p>
                                     本项目仅供学习交流使用，不得用于任何商业用途，否则后果自负。
                                 </p>
                                 <s-divider></s-divider>
+                                <p><a href="https://github.com/GDUTMeow/WelearnBrainBurst">https://github.com/GDUTMeow/WelearnBrainBurst</a></p>
                                 <p>
-                                    © 2024
-                                    <a href="https://github.com/GamerNoTitle">GamerNoTitle</a>. All
-                                    rights reserved.
+                                    © <span id="copyrightYear"></span>
+                                    <a href="https://github.com/GamerNoTitle">GamerNoTitle</a>. 只授权个人使用，禁止进行商业用途。
                                 </p>
                             </div>
                             <s-button type="text" slot="action"> 关闭 </s-button>
@@ -639,6 +644,13 @@
         // 初始化
         document.addEventListener('DOMContentLoaded', () => {
             displayCookieAndLastModified();
+            const currentYear = new Date().getFullYear();
+            const baseYear = 2024;
+            const yearSpan = document.getElementById('copyrightYear');
+
+            yearSpan.textContent = currentYear > baseYear
+                ? `${baseYear}-${currentYear}`
+                : `${baseYear}`;
             if (checkLogon()) {
                 loadCourses();
             };
