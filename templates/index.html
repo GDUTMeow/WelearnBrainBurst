@@ -189,23 +189,21 @@
                                         <b>我同意：使用本项目造成的后果由使用者自行承担，作者不承担任何责任</b>
                                     </s-checkbox>
                                     <br>
-                                    <s-tooltip style="margin-right: 24px; margin-top: 24px;">记得先设置好正确率！！
+                                    <s-snackbar style="margin-right: 24px; margin-top: 24px;"
+                                        id="start-brain-burst-tooltip">
                                         <s-button id="start-brain-burst" slot="trigger">
                                             开始刷课！
                                         </s-button>
-                                    </s-tooltip>
-                                    <s-tooltip style="margin-top: 24px;">记得先设置好挂机时间！！
+                                    </s-snackbar>
+                                    <s-snackbar style="margin-top: 24px;" id="start-away-from-keyboard-tooltip">
                                         <s-button id="start-away-from-keyboard" slot="trigger">
                                             开始挂机！
                                         </s-button>
-                                    </s-tooltip>
+                                    </s-snackbar>
                                 </div>
                             </div>
                         </div>
                     </s-card>
-
-
-
                 </main>
             </s-scroll-view>
         </s-drawer>
@@ -303,7 +301,7 @@
                         `${progress.current}/${progress.total}`;
                 }
             } catch (error) {
-                console.error('状态更新失败:', error);
+                console.warn('状态更新失败:', error);
             }
         }
 
@@ -382,7 +380,7 @@
         `).join('');
 
             } catch (error) {
-                console.error('加载课程失败:', error);
+                console.warn('加载课程失败:', error);
             }
             document.getElementById('loading').style.display = 'none';
         }
@@ -430,7 +428,7 @@
                     activeThreads: data.activeThreads || 0
                 };
             } catch (error) {
-                console.error('获取状态失败:', error);
+                console.warn('获取状态失败:', error);
                 return { status: 'error' }; // 返回明确的错误状态
             } finally {
                 document.getElementById('loading').style.display = 'none';
@@ -459,9 +457,9 @@
                     return false;
                 }
             } catch (error) {
-                console.error('登录检查失败:', error);
+                console.warn('登录检查失败:', error);
                 document.getElementById('onlineStatus').textContent =
-                    '在线状态：⚪ 检测异常';
+                    '在线状态：⚪ 检测异常（请检查控制台）';
                 return false;
             }
         }
@@ -490,16 +488,40 @@
         }
 
         async function handleTaskStart(taskType) {
+            const brainBurst = document.getElementById('start-brain-burst-tooltip');
+            const awayFromKeyboard = document.getElementById('start-away-from-keyboard-tooltip');
             // 验证必填项
             if (!document.getElementById('freeToUse').checked ||
                 !document.getElementById('disclaimer').checked) {
-                alert('请先同意免责声明！');
+                if (taskType === 'brain_burst') {
+                    brainBurst.innerHTML = `请先同意使用协议和免责声明！
+<s-button id="start-brain-burst" slot="trigger">
+    开始刷课！
+</s-button>`
+                }
+                if (taskType === 'away_from_keyboard') {
+                    awayFromKeyboard.innerHTML = `请先同意使用协议和免责声明！
+<s-button id="start-away-from-keyboard" slot="trigger">
+    开始挂机！
+</s-button>`
+                }
                 return;
             }
 
             // 验证单元选择
             if (selectedlessons.size === 0) {
-                alert('请至少选择一个单元！');
+                if (taskType === 'brain_burst') {
+                    brainBurst.innerHTML = `请至少选择一个单元！
+<s-button id="start-brain-burst" slot="trigger">
+    开始刷课！
+</s-button>`
+                }
+                if (taskType === 'away_from_keyboard') {
+                    awayFromKeyboard.innerHTML = `请至少选择一个单元！
+<s-button id="start-away-from-keyboard" slot="trigger">
+    开始挂机！
+</s-button>`
+                }
                 return;
             }
 
@@ -513,14 +535,20 @@
             if (taskType === 'brain_burst') {
                 const rate = document.getElementById('correct-rate').value;
                 if (!validateRate(rate)) {
-                    alert('正确率格式错误！\n示例：98 或 95-100');
+                    brainBurst.innerHTML = `正确率格式错啦！
+<s-button id="start-brain-burst" slot="trigger">
+    开始刷课！
+</s-button>`
                     return;
                 }
                 params.rate = rate;
             } else {
                 const time = document.getElementById('idle-time').value;
                 if (!validateTime(time)) {
-                    alert('时间格式错误！\n示例：300 或 180-300');
+                    awayFromKeyboard.innerHTML = `时间格式错啦！
+<s-button id="start-away-from-keyboard" slot="trigger">
+    开始挂机！
+</s-button>`
                     return;
                 }
                 params.time = time;
@@ -535,14 +563,31 @@
                     body: JSON.stringify(params)
                 });
 
-                if (!res.ok) throw new Error('请求失败');
+                if (!res.ok) {
+                    document.getElementById('loading').style.display = 'none';
+                    throw new Error('请求失败');
+                }
                 alert('任务已开始！');
             } catch (error) {
-                console.error('任务启动失败:', error);
-                alert('任务启动失败，请查看控制台');
+                console.warn('任务启动失败:', error);
+                if (taskType === 'brain_burst') {
+                    brainBurst.innerHTML = `任务启动失败，请重试或查看控制台！
+<s-button id="start-brain-burst" slot="trigger">
+    开始刷课！
+</s-button>`
+                }
+                if (taskType === 'away_from_keyboard') {
+                    awayFromKeyboard.innerHTML = `任务启动失败，请重试或查看控制台！
+<s-button id="start-away-from-keyboard" slot="trigger">
+    开始挂机！
+</s-button>`
+                }
+                document.getElementById('loading').style.display = 'none';
+                return;
             } finally {
                 document.getElementById('loading').style.display = 'none';
             }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
         // 初始化
@@ -558,12 +603,14 @@
 
         document.getElementById('save-cookie-btn').addEventListener('click', saveCookie);
 
-        document.getElementById('start-brain-burst').addEventListener('click', () =>
-            handleTaskStart('brain_burst'));
-
-        document.getElementById('start-away-from-keyboard').addEventListener('click', () =>
-            handleTaskStart('away_from_keyboard'));
-
+        document.body.addEventListener('click', (e) => {
+            if (e.target.id === 'start-brain-burst') {
+                handleTaskStart('brain_burst');
+            }
+            if (e.target.id === 'start-away-from-keyboard') {
+                handleTaskStart('away_from_keyboard');
+            }
+        });
         document.getElementById('course-list').addEventListener('click', function (e) {
             const btn = e.target.closest('.course-select-btn');
             if (btn) selectCourse(btn.dataset.courseId);
