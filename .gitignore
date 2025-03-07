@@ -2,3 +2,5 @@ venv
 *.log
 config.json
 build
+*.xml
+__pycache__

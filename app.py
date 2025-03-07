@@ -7,7 +7,9 @@ import sys
 import time
 import random
 import threading
+import socket
 import httpx
+import webbrowser
 from typing import (
     Any,
     Optional,
@@ -50,21 +52,26 @@ MAX_THREADS = 32
 # ====================== 应用初始化 ======================
 app = Flask(__name__)
 
+
 # ====================== 日志系统配置 ======================
 class LogTypeFilter(logging.Filter):
     """按日志类型过滤的处理器"""
+
     def __init__(self, allowed_type):
         super().__init__()
         self.allowed_type = allowed_type
 
     def filter(self, record):
-        return getattr(record, 'log_type', '') == self.allowed_type
+        return getattr(record, "log_type", "") == self.allowed_type
+
 
 class AppLogFilter(logging.Filter):
     """过滤APP相关日志的处理器"""
+
     def filter(self, record):
-        log_type = getattr(record, 'log_type', '')
-        return log_type.startswith('APP')
+        log_type = getattr(record, "log_type", "")
+        return log_type.startswith("APP")
+
 
 # 创建日志目录
 log_dir = "logs"
@@ -84,7 +91,7 @@ system_handler = logging.FileHandler(
 )
 system_handler.setLevel(logging.INFO)
 system_handler.setFormatter(logging.Formatter("%(message)s"))
-system_handler.addFilter(LogTypeFilter('SYSTEM'))
+system_handler.addFilter(LogTypeFilter("SYSTEM"))
 
 app_handler = logging.FileHandler(
     os.path.join(log_dir, "app.log"), mode="a", encoding="utf-8"
@@ -98,7 +105,7 @@ access_handler = logging.FileHandler(
 )
 access_handler.setLevel(logging.INFO)
 access_handler.setFormatter(logging.Formatter("%(message)s"))
-access_handler.addFilter(LogTypeFilter('ACCESS'))
+access_handler.addFilter(LogTypeFilter("ACCESS"))
 
 # 控制台处理器保持不变
 console_handler = logging.StreamHandler()
@@ -193,7 +200,7 @@ def log_message(message: str, log_type: str = "SYSTEM"):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"[{timestamp}] [{log_type}] {message}"
     state.log_buffer.write(log_entry + "\n")
-    app.logger.info(log_entry, extra={'log_type': log_type})
+    app.logger.info(log_entry, extra={"log_type": log_type})
 
 
 # ====================== 中间件 ======================
@@ -222,6 +229,17 @@ def log_access(response: Response):
 
 
 # ====================== 工具函数 ======================
+def get_port():
+    for port in range(3000, 60001):  # 包含60000
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("0.0.0.0", port))
+                return port
+        except OSError:
+            continue
+    raise ValueError("No available ports between 3000-60000")
+
+
 def get_user_info(client: httpx.Client) -> Dict[str, Optional[str]]:
     """
     从用户信息页面提取用户详细信息
@@ -446,7 +464,7 @@ def get_status():
             "status": state.task_status,
             "progress": state.progress,
             "activeThreads": len(state.active_threads),
-            "success": True
+            "success": True,
         }
     )
 
@@ -621,7 +639,10 @@ class AwayFromKeyboardThread(threading.Thread):
                 return response
             except (httpx.TimeoutException, httpx.HTTPError, Exception) as e:
                 if attempt < self.max_retries - 1:
-                    log_message(f"请求 {url} 失败 ({str(e)})，{self.retry_delay} 秒后重试...", "APPERR")
+                    log_message(
+                        f"请求 {url} 失败 ({str(e)})，{self.retry_delay} 秒后重试...",
+                        "APPERR",
+                    )
                     time.sleep(self.retry_delay)
                 else:
                     log_message(f"请求 {url} 失败，已达最大重试次数", "APPERR")
@@ -644,7 +665,9 @@ class AwayFromKeyboardThread(threading.Thread):
                     "cid": _global.cid,
                     "scoid": scoid,
                 },
-                headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
+                headers={
+                    "Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"
+                },
             )
 
             if "学习数据不正确" in response.text:
@@ -657,7 +680,9 @@ class AwayFromKeyboardThread(threading.Thread):
                         "cid": _global.cid,
                         "scoid": scoid,
                     },
-                    headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
+                    headers={
+                        "Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"
+                    },
                 )
 
             back = json.loads(response.text)["comment"]
@@ -668,7 +693,11 @@ class AwayFromKeyboardThread(threading.Thread):
             else:
                 session_time = total_time = "0"
 
-            learn_time = random.randint(*map(int, self.duration.split("-"))) if "-" in self.duration else int(self.duration)
+            learn_time = (
+                random.randint(*map(int, self.duration.split("-")))
+                if "-" in self.duration
+                else int(self.duration)
+            )
 
             self._http_request_with_retry(
                 "POST",
@@ -681,7 +710,9 @@ class AwayFromKeyboardThread(threading.Thread):
                     "session_time": session_time,
                     "total_time": total_time,
                 },
-                headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
+                headers={
+                    "Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"
+                },
             )
 
             for current_time in range(1, learn_time + 1):
@@ -698,7 +729,9 @@ class AwayFromKeyboardThread(threading.Thread):
                             "session_time": str(int(session_time) + current_time),
                             "total_time": str(int(total_time) + current_time),
                         },
-                        headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
+                        headers={
+                            "Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"
+                        },
                     )
 
             self._http_request_with_retry(
@@ -715,11 +748,15 @@ class AwayFromKeyboardThread(threading.Thread):
                     "cstatus": "completed",
                     "trycount": "0",
                 },
-                headers={"Referer": f"https://welearn.sflep.com/Student/StudyCourse.aspx?cid={_global.cid}&classid={_global.classid}&sco={scoid}"},
+                headers={
+                    "Referer": f"https://welearn.sflep.com/Student/StudyCourse.aspx?cid={_global.cid}&classid={_global.classid}&sco={scoid}"
+                },
             )
 
             state.progress["current"] += 1
-            log_message(f'完成学习: {section["location"]} 耗时: {learn_time}秒', "APPINFO")
+            log_message(
+                f'完成学习: {section["location"]} 耗时: {learn_time}秒', "APPINFO"
+            )
 
         except Exception as e:
             self.wrong_lessons.append(section["location"])
@@ -738,7 +775,9 @@ class AwayFromKeyboardThread(threading.Thread):
                         response = self._http_request_with_retry(
                             "GET",
                             f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={_global.cid}&uid={_global.uid}&unitidx={unit_index}&classid={_global.classid}",
-                            headers={"Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}"},
+                            headers={
+                                "Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}"
+                            },
                         )
                         sections = response.json().get("info", [])
                         break
@@ -769,10 +808,13 @@ class AwayFromKeyboardThread(threading.Thread):
                     t.join()
 
             state.task_status = "completed"
-            log_message(f"刷时长任务完成，失败章节数: {len(self.wrong_lessons)}", "APPINFO")
+            log_message(
+                f"刷时长任务完成，失败章节数: {len(self.wrong_lessons)}", "APPINFO"
+            )
         except Exception as e:
             state.task_status = "error"
             log_message(f"刷时长任务异常终止: {str(e)}", "APPERR")
+
 
 # ====================== 启动配置 ======================
 if __name__ == "__main__":
@@ -797,6 +839,12 @@ if __name__ == "__main__":
     except Exception as e:
         log_message(f"配置加载失败: {str(e)}")
 
+    port = get_port()
+    log_message(f"已获取可用端口: {port}，绑定到 0.0.0.0:{port}")
+    log_message(
+        f"将自动打开浏览器访问 http://127.0.0.1:{port}，你也可以自己打开浏览器进行访问"
+    )
+    webbrowser.open(f"http://127.0.0.1:{port}")
     # 启动应用
     with LogCapture(state.log_buffer):
-        app.run(host="0.0.0.0", port=5000, debug=True)
+        app.run(host="0.0.0.0", port=port, debug=False)
