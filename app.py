@@ -51,19 +51,56 @@ MAX_THREADS = 32
 app = Flask(__name__)
 
 # ====================== 日志系统配置 ======================
+class LogTypeFilter(logging.Filter):
+    """按日志类型过滤的处理器"""
+    def __init__(self, allowed_type):
+        super().__init__()
+        self.allowed_type = allowed_type
+
+    def filter(self, record):
+        return getattr(record, 'log_type', '') == self.allowed_type
+
+class AppLogFilter(logging.Filter):
+    """过滤APP相关日志的处理器"""
+    def filter(self, record):
+        log_type = getattr(record, 'log_type', '')
+        return log_type.startswith('APP')
+
 # 创建日志目录
 log_dir = "logs"
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
-# 配置文件处理器
+# 原日志处理器（保留最新日志）
 file_handler = logging.FileHandler(
     os.path.join(log_dir, "latest.log"), mode="a", encoding="utf-8"
 )
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(logging.Formatter("%(message)s"))
 
-# 配置控制台处理器
+# 新增分类日志处理器
+system_handler = logging.FileHandler(
+    os.path.join(log_dir, "system.log"), mode="a", encoding="utf-8"
+)
+system_handler.setLevel(logging.INFO)
+system_handler.setFormatter(logging.Formatter("%(message)s"))
+system_handler.addFilter(LogTypeFilter('SYSTEM'))
+
+app_handler = logging.FileHandler(
+    os.path.join(log_dir, "app.log"), mode="a", encoding="utf-8"
+)
+app_handler.setLevel(logging.INFO)
+app_handler.setFormatter(logging.Formatter("%(message)s"))
+app_handler.addFilter(AppLogFilter())
+
+access_handler = logging.FileHandler(
+    os.path.join(log_dir, "access.log"), mode="a", encoding="utf-8"
+)
+access_handler.setLevel(logging.INFO)
+access_handler.setFormatter(logging.Formatter("%(message)s"))
+access_handler.addFilter(LogTypeFilter('ACCESS'))
+
+# 控制台处理器保持不变
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(logging.Formatter("%(message)s"))
@@ -72,6 +109,9 @@ console_handler.setFormatter(logging.Formatter("%(message)s"))
 app.logger.setLevel(logging.INFO)
 app.logger.addHandler(file_handler)
 app.logger.addHandler(console_handler)
+app.logger.addHandler(system_handler)
+app.logger.addHandler(app_handler)
+app.logger.addHandler(access_handler)
 
 
 # ====================== 类型定义 ======================
@@ -147,12 +187,13 @@ class LogCapture:
         sys.stderr = self.original_stderr
 
 
+# ====================== 日志工具 ======================
 def log_message(message: str, log_type: str = "SYSTEM"):
     """统一日志记录函数"""
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"[{timestamp}] [{log_type}] {message}"
     state.log_buffer.write(log_entry + "\n")
-    app.logger.info(log_entry)
+    app.logger.info(log_entry, extra={'log_type': log_type})
 
 
 # ====================== 中间件 ======================
