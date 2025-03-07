@@ -394,7 +394,7 @@ def get_lessons():
             url,
             headers={"Referer": "https://welearn.sflep.com/student/course_info.aspx"},
         )
-        # log_message(f"获取课程单元元数据页面: {response.text}", "APPDEBUG")
+        log_message(f"成功获取到返回：{response.text}", "APPDEBUG")
         _global.uid = re.search('"uid":(.*?),', response.text).group(1)
         _global.classid = re.search('"classid":"(.*?)"', response.text).group(1)
         log_message(
@@ -474,6 +474,7 @@ def get_status():
 def get_user_info_route():
     return get_user_info(client)
 
+
 @app.route("/api/reset", methods=["GET"])
 def reset():
     """重置状态"""
@@ -481,10 +482,12 @@ def reset():
     state.reset()
     return jsonify(success=True, error="")
 
+
 @app.route("/api/shutdown", methods=["GET"])
 def exit():
     """退出应用"""
     os.kill(os.getpid(), signal.SIGINT)
+
 
 # ====================== 业务逻辑 ======================
 def validate_cookies(cookies: Dict[str, str]) -> bool:
@@ -492,6 +495,7 @@ def validate_cookies(cookies: Dict[str, str]) -> bool:
     try:
         test_url = "https://welearn.sflep.com/user/userinfo.aspx"
         resp = client.get(test_url, cookies=cookies)
+        log_message(f"Cookie验证返回：{resp.text}", "APPDEBUG")
         return "我的资料" in resp.text
     except Exception as e:
         log_message(f"Cookie验证失败: {str(e)}")
@@ -514,18 +518,18 @@ class BrainBurstThread(threading.Thread):
                 "Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}",
             }
             for lesson in self.lessonIds:  # 获取课程详细列表
-                response = client.get(
+                resp = client.get(
                     f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={_global.cid}&uid={_global.uid}&unitidx={_global.lessonIndex.index(lesson)}&classid={_global.classid}",
                     headers=infoHeaders,
                 )
-                if "异常" in response.text or "出错了" in response.text:
+                if "异常" in resp.text or "出错了" in resp.text:
                     state.task_status = "error"
                     log_message(
-                        f"获取课程 {lesson} 详细列表失败: {response.text}", "APPERR"
+                        f"获取课程 {lesson} 详细列表失败: {resp.text}", "APPERR"
                     )
                     return
-                for section in response.json()["info"]:  # 获取课程的小节列表并刷课
-                    # log_message(f"获取到课程 {lesson} 的详细信息 {response.json()}", "APPDEBUG")
+                for section in resp.json()["info"]:  # 获取课程的小节列表并刷课
+                    log_message(f"获取到课程 {lesson} 的详细信息 {resp.json()}", "APPDEBUG")
                     if section["isvisible"] == "false":
                         log_message(f'跳过未开放课程 {section["location"]}', "APPERR")
                         log_message(f"课程 {lesson} 的返回信息：{section}", "APPDEBUG")
@@ -624,7 +628,7 @@ class BrainBurstThread(threading.Thread):
             log_message(f"刷课任务出错: {str(e)}")
             state.progress = {
                 "current": self.lessonIds * 100,
-                "total": len(self.lessonIds * len(response.json()["info"])),
+                "total": len(self.lessonIds) * len(resp.json()["info"]),
             }
             state.task_status = "error"
 
