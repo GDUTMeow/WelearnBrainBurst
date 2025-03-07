@@ -41,7 +41,7 @@
                         <img src="/static/img/Nega_Nebulus_Logo.png" alt="Logo" style="width: 40px; height: 40px;">
                     </s-icon-button>
 
-                    <s-navigation-item selected="true" data-page="dashboard">
+                    <s-navigation-item selected="true">
                         <svg slot="icon" viewBox="0 -960 960 960">
                             <path
                                 d="M520-600v-240h320v240H520ZM120-440v-400h320v400H120Zm400 320v-400h320v400H520Zm-400 0v-240h320v240H120Zm80-400h160v-240H200v240Zm400 320h160v-240H600v240Zm0-480h160v-80H600v80ZM200-200h160v-80H200v80Zm160-320Zm240-160Zm0 240ZM360-280Z" />
@@ -49,14 +49,6 @@
                         <div slot="text">控制面板</div>
                     </s-navigation-item>
 
-                    <s-navigation-item id="shutdown">
-                        <svg slot="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960">
-                            <path
-                                d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z">
-                            </path>
-                        </svg>
-                        <div slot="text">退出助手</div>
-                    </s-navigation-item>
                     <div slot="end" style="display: flex;align-items: flex-end; padding: 16px 0;">
                         <s-dialog>
                             <s-icon-button type="outlined" slot="trigger">
@@ -101,7 +93,7 @@
             <s-linear-progress indeterminate="true" id="loading" style="display: none;"></s-linear-progress>
 
             <!-- 控制面板 -->
-            <s-scroll-view>
+            <s-scroll-view id="allView">
                 <main style="display: block; margin: 24px; margin-left: 15%; max-width: 70%;">
                     <s-card style="display: block;
                     padding: 24px;
@@ -116,6 +108,12 @@
                                 <p id="lastModified">上次保存：未知</p>
                                 <p id="onlineStatus">在线状态</p>
                                 <s-button id="save-cookie-btn">保存 Cookie 并登录</s-button>
+                            </div>
+                            <div align="right" style="margin-top: 8px;">
+                                <s-button id="reset-btn" style="margin-right: 8px;">重置程序状态</s-button>
+                                <s-snackbar>已发出关闭指令，现在可以关闭本页面了
+                                    <s-button id="shutdown" slot="trigger">退出程序</s-button>
+                                </s-snackbar>
                             </div>
                         </div>
                         <s-divider style="margin-top: 24px; margin-bottom: 24px"> 任务状态 </s-divider>
@@ -214,6 +212,11 @@
     <script>
         let autoRefreshInterval = null;
         let selectedlessons = new Set(); // 存储选中的单元ID
+        let shutdownFlag = false;
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
 
         // 添加/移除单元ID
         function addlesson(lessonId) {
@@ -568,7 +571,20 @@
                     document.getElementById('loading').style.display = 'none';
                     throw new Error('请求失败');
                 }
-                alert('任务已开始！');
+                else {
+                    if (taskType === 'brain_burst') {
+                        brainBurst.innerHTML = `任务已启动！
+<s-button id="start-brain-burst" slot="trigger">
+    开始刷课！
+</s-button>`
+                    }
+                    if (taskType === 'away_from_keyboard') {
+                        awayFromKeyboard.innerHTML = `任务已启动！
+<s-button id="start-away-from-keyboard" slot="trigger">
+    开始挂机！
+</s-button>`
+                    }
+                }
             } catch (error) {
                 console.warn('任务启动失败:', error);
                 if (taskType === 'brain_burst') {
@@ -588,7 +604,36 @@
             } finally {
                 document.getElementById('loading').style.display = 'none';
             }
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            document.getElementById('allView').scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        async function reset() {
+            await fetch('/api/reset')
+                .then(res => res.json())
+                .then(data => {
+                    console.log(data)
+                    document.getElementById('dashboard').style.display = 'none';
+                    document.getElementById('onlineStatus').textContent =
+                        '在线状态：🔴 未登录';
+                });
+        }
+
+        function shutdown() {
+            shutdownFlag = true;
+            try {
+                fetch('/api/shutdown');
+            }
+            catch (error) {
+                console.info('获取不到返回，认为是服务器已关闭');
+            }
+            sleep(2000);
+            document.getElementById('dashboard').style.display = 'none';
+            document.getElementById('onlineStatus').textContent =
+                '在线状态：🟣 已关闭程序';
+            document.getElementById('current-status').textContent = '🟣 已关闭程序';
+            document.getElementById('progress-text').textContent = '当前运行状态：已关闭程序，现在你可以关闭本页面了';
+            document.getElementById('indetermined-status').style.display = 'none';
+            document.getElementById('task-status').style.display = 'none';
         }
 
         // 初始化
@@ -598,7 +643,9 @@
                 loadCourses();
             };
             setInterval(() => {
-                updateStatus();
+                if (!shutdownFlag) {
+                    updateStatus();
+                }
             }, 1000);
         });
 
@@ -617,6 +664,8 @@
             if (btn) selectCourse(btn.dataset.courseId);
         });
 
+        document.getElementById('reset-btn').addEventListener('click', reset);
+        document.getElementById('shutdown').addEventListener('click', shutdown);
 
     </script>
 </body>

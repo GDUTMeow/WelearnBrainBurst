@@ -10,6 +10,7 @@ import threading
 import socket
 import httpx
 import webbrowser
+import signal
 from typing import (
     Any,
     Optional,
@@ -473,6 +474,17 @@ def get_status():
 def get_user_info_route():
     return get_user_info(client)
 
+@app.route("/api/reset", methods=["GET"])
+def reset():
+    """重置状态"""
+    stop_tasks()
+    state.reset()
+    return jsonify(success=True, error="")
+
+@app.route("/api/shutdown", methods=["GET"])
+def exit():
+    """退出应用"""
+    os.kill(os.getpid(), signal.SIGINT)
 
 # ====================== 业务逻辑 ======================
 def validate_cookies(cookies: Dict[str, str]) -> bool:
