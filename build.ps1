@@ -132,8 +132,8 @@ Execute-Step -StepName "编译程序" -StepScript {
     --windows-icon-from-ico=static/img/icon.ico `
     --windows-company-name=GamerNoTitle `
     --windows-product-name="WelearnBrainBurst" `
-    --windows-file-version=1.0 `
-    --windows-product-version=1.0 `
+    --windows-file-version=1.1 `
+    --windows-product-version=1.1 `
     --lto=yes --assume-yes-for-downloads app.py
 }
 
