@@ -533,7 +533,6 @@ class BrainBurstThread(threading.Thread):
                     "current": state.progress["current"],
                     "total": len(response.json()["info"]) * len(self.lessonIds),
                 }
-
                 for section in response.json()["info"]:  # 获取课程的小节列表并刷课
                     log_message(
                         f"获取到课程 {lesson} 的详细信息 {response.json()}", "APPDEBUG"
@@ -586,11 +585,7 @@ class BrainBurstThread(threading.Thread):
                                 "APPINFO",
                             )
                             # 第 N 类刷课法 neta 了高数的第 N 类积分法
-                            state.progress = {
-                                "current": state.progress["current"] + 1,
-                                "total": len(response.json()["info"]) * len(self.lessonIds),
-                            }
-                            # 这里假设了每个课程的节数是一样的，反正看起来好像差不多，应该无所谓
+                            state.progress["current"] += 1
                             continue
                         else:  # 第二种刷课法
                             response = client.post(
@@ -615,24 +610,18 @@ class BrainBurstThread(threading.Thread):
                                     f"刷课结果：以 {crate}% 的正确率使用“第二类刷课法”完成了课程 {section['location']}",
                                     "APPINFO",
                                 )
-                                state.progress = {
-                                    "current": state.progress["current"] + 1,
-                                    "total": len(response.json()["info"]) * len(self.lessonIds),
-                                }
+                                state.progress["current"] += 1
                                 continue
                     else:
-                        state.progress = {
-                            "current": state.progress["current"] + 1,
-                            "total": len(response.json()["info"]) * len(self.lessonIds),
-                        }
+                        state.progress["current"] += 1
                         log_message(f'跳过已完成课程 {section["location"]}', "APPINFO")
                 log_message(f"课程 {lesson} 刷课完成", "APPINFO")
             state.task_status = "completed"
         except Exception as e:
             log_message(f"刷课任务出错: {str(e)}")
             state.progress = {
-                "current": self.lessonIds * 100,
-                "total": len(response.json()["info"]) * len(self.lessonIds)
+                "current": 0,
+                "total": 1
             }
             state.task_status = "error"
 
