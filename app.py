@@ -531,7 +531,7 @@ class BrainBurstThread(threading.Thread):
                     return
                 state.progress = {
                     "current": state.progress["current"],
-                    "total": len(self.lessonIds) * len(resp.json()["info"]),
+                    "total": len(response.json()["info"]) * len(self.lessonIds),
                 }
 
                 for section in response.json()["info"]:  # 获取课程的小节列表并刷课
@@ -588,8 +588,7 @@ class BrainBurstThread(threading.Thread):
                             # 第 N 类刷课法 neta 了高数的第 N 类积分法
                             state.progress = {
                                 "current": state.progress["current"] + 1,
-                                "total": len(self.lessonIds)
-                                * len(response.json()["info"]),
+                                "total": len(response.json()["info"]) * len(self.lessonIds),
                             }
                             # 这里假设了每个课程的节数是一样的，反正看起来好像差不多，应该无所谓
                             continue
@@ -618,14 +617,13 @@ class BrainBurstThread(threading.Thread):
                                 )
                                 state.progress = {
                                     "current": state.progress["current"] + 1,
-                                    "total": len(self.lessonIds)
-                                    * len(response.json()["info"]),
+                                    "total": len(response.json()["info"]) * len(self.lessonIds),
                                 }
                                 continue
                     else:
                         state.progress = {
                             "current": state.progress["current"] + 1,
-                            "total": len(self.lessonIds) * len(response.json()["info"]),
+                            "total": len(response.json()["info"]) * len(self.lessonIds),
                         }
                         log_message(f'跳过已完成课程 {section["location"]}', "APPINFO")
                 log_message(f"课程 {lesson} 刷课完成", "APPINFO")
@@ -634,7 +632,7 @@ class BrainBurstThread(threading.Thread):
             log_message(f"刷课任务出错: {str(e)}")
             state.progress = {
                 "current": self.lessonIds * 100,
-                "total": len(self.lessonIds) * len(resp.json()["info"]),
+                "total": len(response.json()["info"]) * len(self.lessonIds)
             }
             state.task_status = "error"
 
