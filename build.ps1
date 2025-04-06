@@ -100,8 +100,6 @@ Execute-Step -StepName "Nuitka 编译" -StepScript {
         "--windows-icon-from-ico=static/img/icon.ico",
         "--windows-company-name=GamerNoTitle",
         "--windows-product-name=WelearnBrainBurst",
-        "--windows-file-version=$Version",
-        "--windows-product-version=$Version",
         "--lto=yes",
         "--assume-yes-for-downloads",
         "app.py"
