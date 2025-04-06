@@ -3,6 +3,10 @@
 
 Clear-Host
 
+param(
+    [string]$Version = "1.3"
+)
+
 # 定义日志函数
 function Write-Log {
     param (
@@ -132,9 +136,15 @@ Execute-Step -StepName "编译程序" -StepScript {
     --windows-icon-from-ico=static/img/icon.ico `
     --windows-company-name=GamerNoTitle `
     --windows-product-name="WelearnBrainBurst" `
-    --windows-file-version=1.3 `
-    --windows-product-version=1.3 `
+    --windows-file-version=$Version `
+    --windows-product-version=$Version `
     --lto=yes --assume-yes-for-downloads app.py
+}
+
+# 验证模板存在
+Write-Log -Level "DEBUG" -Message "验证模板包含情况"
+Get-ChildItem -Recurse build/app.dist/templates | ForEach-Object {
+    Write-Log -Level "DEBUG" -Message $_.FullName
 }
 
 # 记录脚本结束时间

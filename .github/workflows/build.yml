@@ -1,0 +1,88 @@
+name: Build and Release
+
+on:
+  push:
+    branches: ["master"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "自定义版本号 (留空则使用 commit 短哈希)"
+        required: false
+        type: string
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: set-version
+        shell: pwsh
+        run: |
+          # 手动触发时优先使用输入版本号
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ github.event.inputs.version }}" -ne "") {
+            $version = "${{ github.event.inputs.version }}"
+            Write-Host "使用手动输入版本号: $version"
+          } else {
+            $version = git rev-parse --short HEAD
+            Write-Host "使用 commit 短哈希版本号: $version"
+          }
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install Nuitka
+        run: pip install nuitka
+
+      - name: Fix execution policy
+        shell: pwsh
+        run: Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+
+      - name: Run build script
+        shell: pwsh
+        run: |
+          .\build.ps1 -Version "${{ steps.set-version.outputs.version }}"
+
+      - name: Verify build output
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse build/app.dist
+          Test-Path build/app.dist/templates
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: WelearnBuild-${{ steps.set-version.outputs.version }}
+          path: |
+            build/app.dist/​**​
+            !build/app.dist/​**​/*.py
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        if: success()
+        with:
+          tag_name: ${{ steps.set-version.outputs.version }}
+          name: "v${{ steps.set-version.outputs.version }}"
+          body: |
+            ${{ github.event_name == 'workflow_dispatch' && '手动触发版本' || '自动构建版本' }}
+
+            ​**​构建信息​**​
+            - 版本标识: `${{ steps.set-version.outputs.version }}`
+            - 原始提交: [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+            - 构建时间: ${{ steps.set-version.outputs.DATE }}
+          draft: false
+          prerelease: ${{ github.event_name != 'workflow_dispatch' }}
+          files: |
+            build/app.dist/​**​/*
+            !build/app.dist/*.build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
