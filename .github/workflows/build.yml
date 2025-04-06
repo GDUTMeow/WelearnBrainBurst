@@ -45,6 +45,7 @@ jobs:
       shell: pwsh
       run: |
         $ProgressPreference = 'SilentlyContinue'
+        pip install nuitka
         .\build.ps1 -Version "${{ steps.set-version.outputs.version }}"
 
     - name: Upload Artifacts
