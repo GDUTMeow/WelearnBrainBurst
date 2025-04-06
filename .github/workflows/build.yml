@@ -53,8 +53,7 @@ jobs:
       with:
         name: WelearnBrainBurst-${{ steps.set-version.outputs.version }}
         path: |
-          build/app.dist/​**​
-          !build/app.dist/​**​/*.py
+          build/app.dist/​*
 
     - name: Release
       uses: softprops/action-gh-release@v2
@@ -65,10 +64,7 @@ jobs:
           自动化构建版本: ${{ steps.set-version.outputs.version }}
           提交信息: ${{ github.event.head_commit.message }}
         files: |
-          build/app.dist/​**​/*.exe
-          build/app.dist/​**​/*.dll
-          build/app.dist/templates/​**​/*
-          build/app.dist/static/​**​/*
+          build/app.dist/*
         draft: false
         prerelease: ${{ github.event_name != 'workflow_dispatch' }}
       env:
