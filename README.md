@@ -8,6 +8,10 @@
 
 （话说还有人记得加速世界嘛）
 
+## 开始使用
+
+请看 https://gamernotitle.sg.larksuite.com/wiki/PLLywJxlViN31tkBiIflSaytgBg
+
 ## Credit
 
 - https://gitee.com/xxxhhy/welearn-curriculum-finsh
