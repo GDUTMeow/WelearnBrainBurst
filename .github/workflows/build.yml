@@ -48,12 +48,17 @@ jobs:
         pip install nuitka
         .\build.ps1 -Version "${{ steps.set-version.outputs.version }}"
 
+    - name: Compress Artifacts
+      shell: pwsh
+      run: |
+        $version = "${{ steps.set-version.outputs.version }}"
+        Compress-Archive -Path .\build\app.dist -DestinationPath ".\build\WelearnBrainBurst-$version.zip"
+
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: WelearnBrainBurst-${{ steps.set-version.outputs.version }}
-        path: |
-          build/app.dist/​*
+        path: build/WelearnBrainBurst-${{ steps.set-version.outputs.version }}.zip
 
     - name: Release
       uses: softprops/action-gh-release@v2
@@ -63,8 +68,7 @@ jobs:
         body: |
           自动化构建版本: ${{ steps.set-version.outputs.version }}
           提交信息: ${{ github.event.head_commit.message }}
-        files: |
-          build/app.dist/*
+        files: build/WelearnBrainBurst-${{ steps.set-version.outputs.version }}.zip
         draft: false
         prerelease: ${{ github.event_name != 'workflow_dispatch' }}
       env:
