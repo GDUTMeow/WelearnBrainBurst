@@ -59,7 +59,7 @@ jobs:
           Test-Path build/app.dist/templates
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: WelearnBuild-${{ steps.set-version.outputs.version }}
           path: |
