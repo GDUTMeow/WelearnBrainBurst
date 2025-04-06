@@ -1,8 +1,6 @@
 # 设置控制台编码为 UTF-8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
-Clear-Host
-
 param(
     [string]$Version = "1.3"
 )
