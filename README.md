@@ -2,6 +2,10 @@
 
 这是一个 Welearn 的刷课脚本，旨在将大学生从繁重的课业中解放出来，从而提高学习效率。
 
+> [Tips]
+>
+> 本脚本在新视野大学英语系列课程中测试通过，其他课程未测（我没有其他课程咋测嘛｡°(°¯᷄◠¯᷅°)°｡）
+
 - Telegram 私信: https://t.me/PaffCreamPMBot  
 
 - Telegram 群组: https://t.me/DohnaNyan  
