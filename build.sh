@@ -98,7 +98,7 @@ execute_step "Nuitka 编译" "
 # 步骤5: 验证输出结构
 execute_step "验证编译结果" "
     REQUIRED_FILES=(
-        'build/app.dist/app'
+        'build/app.dist/app.bin'
         'build/app.dist/templates'
         'build/app.dist/static'
     )

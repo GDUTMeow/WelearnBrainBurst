@@ -34,7 +34,7 @@ jobs:
       - name: Set up environment for Windows
         if: matrix.os == 'windows-latest'
         run: |
-          choco install python --yes
+          choco install python312 --yes
           python -m ensurepip
           echo "Environment setup complete."
 
