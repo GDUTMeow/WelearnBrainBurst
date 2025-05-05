@@ -42,14 +42,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
-          chmod +x deploy.sh  # 确保脚本可执行
-          ./deploy.sh  # 运行Bash脚本
+          chmod +x build.sh  # 确保脚本可执行
+          ./build.sh  # 运行Bash脚本
 
       - name: Install dependencies and build for Windows
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          .\deploy.ps1  # 运行PowerShell脚本
+          .\build.ps1  # 运行PowerShell脚本
 
       - name: Upload build output as artifact
         uses: actions/upload-artifact@v4
