@@ -1,75 +1,102 @@
-name: Build and Release
+name: Build and Release for Linux and Windows
 
 on:
   push:
-    branches: [ master ]
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
   workflow_dispatch:
     inputs:
-      custom_version:
-        description: '版本号'
-        required: false
+      tag_version:
+        description: 'Version tag (e.g., v1.2.3)'
+        required: true
         type: string
 
+permissions:
+  contents: write
+
 jobs:
-  build:
-    runs-on: windows-latest
-    timeout-minutes: 25
-    permissions:
-      contents: write
-
+  create-packages:
+    strategy:
+      matrix:
+        os: [ "ubuntu-latest", "windows-latest" ]
+    runs-on: ${{ matrix.os }}
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: Set up environment for Linux (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt update
+          sudo apt install -y python3-venv build-essential
+          echo "Environment setup complete."
 
-    - name: Setup MinGW
-      run: choco install mingw -y
-      shell: pwsh
+      - name: Set up environment for Windows
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install python --yes
+          python -m ensurepip
+          echo "Environment setup complete."
 
-    - name: Set Version
-      id: set-version
-      shell: pwsh
-      run: |
-        $version = if ("${{ inputs.custom_version }}") { 
-            "${{ inputs.custom_version }}" 
-        } else { 
-            (git rev-parse --short HEAD).Substring(0,7) 
-        }
-        echo "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Install dependencies and build for Linux
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          chmod +x deploy.sh  # 确保脚本可执行
+          ./deploy.sh  # 运行Bash脚本
 
-    - name: Compile
-      shell: pwsh
-      run: |
-        $ProgressPreference = 'SilentlyContinue'
-        pip install nuitka
-        .\build.ps1 -Version "${{ steps.set-version.outputs.version }}"
+      - name: Install dependencies and build for Windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          .\deploy.ps1  # 运行PowerShell脚本
 
-    - name: Compress Artifacts
-      shell: pwsh
-      run: |
-        $version = "${{ steps.set-version.outputs.version }}"
-        Compress-Archive -Path .\build\app.dist\* -DestinationPath ".\build\WelearnBrainBurst-$version.zip"
+      - name: Upload build output as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ matrix.os }}
+          path: |
+            build/app.dist/**
+          if-no-files-found: error
 
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: WelearnBrainBurst-${{ steps.set-version.outputs.version }}
-        path: build/WelearnBrainBurst-${{ steps.set-version.outputs.version }}.zip
+  release:
+    runs-on: "ubuntu-latest"
+    needs: ["create-packages"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ steps.set-version.outputs.version }}
-        name: Release ${{ steps.set-version.outputs.version }}
-        body: |
-          自动化构建版本: ${{ steps.set-version.outputs.version }}
-          提交信息: ${{ github.event.head_commit.message }}
-        files: build/WelearnBrainBurst-${{ steps.set-version.outputs.version }}.zip
-        draft: false
-        prerelease: ${{ github.event_name != 'workflow_dispatch' }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+          pattern: app-*
+          merge-multiple: true
+
+      - name: Determine Version
+        id: determine_version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.tag_version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Show the output tree of release
+        run: |
+          tree release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.determine_version.outputs.version }}  # 使用确定的版本作为标签
+          prerelease: ${{ contains(github.ref_name, '-pre') || contains(steps.determine_version.outputs.version, '-pre') }}  # 示例：如果版本包含'-pre'，标记为预发布
+          make_latest: legacy
+          draft: true
+          files: |
+            release/app-*/**/*  # 上传所有下载的工件
+
+      - name: Clean up artifacts
+        uses: geekyeggo/delete-artifact@v5
+        with:
+          name: app-*

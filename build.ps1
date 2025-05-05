@@ -92,7 +92,6 @@ Execute-Step -StepName "Nuitka 编译" -StepScript {
     $compileArgs = @(
         "--standalone",
         "--mingw",  # 强制使用 MinGW
-        "--plugin-enable=tk-inter",
         "--include-data-dir=templates=templates",
         "--include-data-dir=static=static",
         "--output-dir=build",

@@ -4,3 +4,4 @@ config.json
 build
 *.xml
 __pycache__
+.venv 
