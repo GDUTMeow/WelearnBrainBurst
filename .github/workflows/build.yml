@@ -71,30 +71,33 @@ jobs:
         with:
           path: release
           pattern: app-*
-          merge-multiple: true
+          merge-multiple: false
 
       - name: Determine Version
         id: determine_version
         run: |
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.tag_version }}" >> $GITHUB_OUTPUT
+            echo "version=${{ github.event.inputs.tag_version }}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           fi
+          echo "Determined version: ${{ steps.determine_version.outputs.version }}"  # 调试输出
 
-      - name: Show the output tree of release
+      - name: Organize and show directory structure
         run: |
+          echo "Files in release directory:"
           tree release
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.determine_version.outputs.version }}  # 使用确定的版本作为标签
-          prerelease: ${{ contains(github.ref_name, '-pre') || contains(steps.determine_version.outputs.version, '-pre') }}  # 示例：如果版本包含'-pre'，标记为预发布
+          tag_name: ${{ steps.determine_version.outputs.version }}
+          prerelease: ${{ contains(steps.determine_version.outputs.version, '-pre') }}
           make_latest: legacy
           draft: true
           files: |
-            release/app-*/**/*  # 上传所有下载的工件
+            release/app-ubuntu-latest/**
+            release/app-windows-latest/**
 
       - name: Clean up artifacts
         uses: geekyeggo/delete-artifact@v5
