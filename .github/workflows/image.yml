@@ -1,0 +1,67 @@
+name: Docker Image CI/CD
+
+# 当推送到 main 分支时自动触发
+# 也可以手动触发，允许输入自定义 tagname
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      tagname:
+        description: "Custom Docker image tag (e.g., v1.0.0). If empty, uses commit SHA."
+        required: false
+        type: string
+
+jobs:
+  build_and_publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # 允许读取仓库内容
+      packages: write # 如果推送到 GitHub Packages Registry (ghcr.io) 则需要此权限，Docker Hub 不需要但保留无害
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }} # 使用 GitHub Secrets 存储 Docker Hub 密码或访问令牌
+
+      - name: Set up image tags
+        id: set_tags
+        run: |
+          IMAGE_NAME="gamernotitle/welearn-brain-burst"
+          CUSTOM_TAG="${{ github.event.inputs.tagname }}" # 从 workflow_dispatch 获取自定义标签
+          COMMIT_SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7) # 获取短 SHA
+
+          # 默认标签总是包含短 SHA
+          ALL_TAGS="$IMAGE_NAME:$COMMIT_SHA_SHORT"
+
+          # 如果提供了自定义标签，则添加自定义标签
+          if [ -n "$CUSTOM_TAG" ]; then
+            ALL_TAGS="$ALL_TAGS,$IMAGE_NAME:$CUSTOM_TAG"
+            echo "Using custom tag: $CUSTOM_TAG"
+          else
+            echo "No custom tag provided, using commit SHA: $COMMIT_SHA_SHORT"
+            # 如果是推送到 main 分支且没有自定义标签，则添加 'latest' 标签
+            if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+              ALL_TAGS="$ALL_TAGS,$IMAGE_NAME:latest"
+              echo "Adding 'latest' tag for main branch push."
+            fi
+          fi
+
+          echo "Generated tags: $ALL_TAGS"
+          # 将生成的标签字符串设置为步骤输出，供后续步骤使用
+          echo "tags=$ALL_TAGS" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.set_tags.outputs.tags }}
