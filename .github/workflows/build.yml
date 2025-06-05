@@ -19,61 +19,42 @@ jobs:
     strategy:
       matrix:
         os: [ "ubuntu-latest", "windows-latest" ]
-        python-version: [ "3.12" ] # 指定 Python 版本
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4 # 推荐使用最新版本
+        uses: actions/checkout@v3
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5 # 使用 setup-python action
-        with:
-          python-version: ${{ matrix.python-version }}
-          # cache: 'pip' # 如果有 requirements.txt 可以开启 pip 缓存
-
-      - name: Create and activate virtual environment
-        shell: bash # Linux和Windows通用Shell，方便执行venv命令
+      - name: Set up environment for Linux (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
         run: |
-          # 创建虚拟环境
-          python -m venv .venv
-          # 激活虚拟环境 (对于当前runner的Shell有效)
-          # 对于bash/zsh
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            echo "source .venv/bin/activate" >> "$GITHUB_ENV"
-          # 对于PowerShell
-          elif [[ "${{ runner.os }}" == "Windows" ]]; then
-            echo ".venv/Scripts/Activate.ps1" >> "$GITHUB_ENV"
-          fi
-          # 更新 PATH 确保后续步骤使用激活的 venv
-          echo "PATH=$PWD/.venv/bin:$PATH" >> "$GITHUB_ENV" # Linux
-          echo "PATH=$PWD/.venv/Scripts;$PATH" >> "$GITHUB_ENV" # Windows
+          sudo apt update
+          sudo apt install -y python3-venv build-essential
+          echo "Environment setup complete."
 
-      - name: Install dependencies from requirements.txt
-        # 确保在激活的虚拟环境中安装依赖
+      - name: Set up environment for Windows
+        if: matrix.os == 'windows-latest'
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt # 假设你的依赖在 requirements.txt 中
-
-      - name: Get os type
-        run: |
+          choco install python312 --yes
+          python -m ensurepip
+          echo "Environment setup complete."
 
       - name: Install dependencies and build for Linux
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
-          chmod +x build.sh
-          ./build.sh
+          chmod +x build.sh  # 确保脚本可执行
+          ./build.sh  # 运行Bash脚本
 
       - name: Install dependencies and build for Windows
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          .\build.ps1
+          .\build.ps1  # 运行PowerShell脚本
 
       - name: Upload build output as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WelearnBrainBurst_${{ inputs.tag_version }}_${{ runner.os }}_x64
+          name: WelearnBrainBurst_${{ inputs.tag_version }}_${{ runner.os }}_${{ runner.arch }}
           path: |
             build/app.dist/**
           if-no-files-found: error
