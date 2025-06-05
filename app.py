@@ -339,15 +339,30 @@ def api_login(cookies: str = None):
     try:
         if not cookies:
             cookies = request.json.get("cookies", "")
-        cookie_dict = dict(
-            map(lambda x: x.split("=", 1), filter(None, cookies.split(";")))
-        )
+
+        cookie_dict = {}
+        for part in cookies.split(";"):
+            cleaned_part = part.strip()  # 移除整个 "key=value" 部分的前后空格
+            if not cleaned_part:
+                continue  # 跳过空字符串
+
+            eq_index = cleaned_part.find("=")
+            if eq_index != -1:
+                key = cleaned_part[:eq_index].strip()  # 移除键名部分的前后空格
+                value = cleaned_part[eq_index + 1 :].strip()  # 移除值部分的前后空格
+                if key:  # 确保键名不为空
+                    cookie_dict[key] = value
+            else:
+                key = cleaned_part.strip()
+                if key:
+                    cookie_dict[key] = ""
+
         log_message(f"尝试登录: {cookie_dict}")
         if validate_cookies(cookie_dict):
             client.cookies.update(cookie_dict)
             state.cookies = cookie_dict
             with open("config.json", "w") as f:
-                json.dump({"cookies": cookies}, f)
+                json.dump({"cookies": cookies}, f)  # 这里保存的是原始cookies字符串
             userinfo = get_user_info(client)
             log_message(f"登录成功: {userinfo}")
             state.task_status = "idle"
@@ -358,6 +373,7 @@ def api_login(cookies: str = None):
             )
         return jsonify(success=False, error="Cookie验证失败")
     except Exception as e:
+        log_message(f"登录过程中发生异常: {str(e)}", "APPERR")
         return jsonify(success=False, error=str(e))
 
 
@@ -619,10 +635,7 @@ class BrainBurstThread(threading.Thread):
             state.task_status = "completed"
         except Exception as e:
             log_message(f"刷课任务出错: {str(e)}")
-            state.progress = {
-                "current": 0,
-                "total": 1
-            }
+            state.progress = {"current": 0, "total": 1}
             state.task_status = "error"
 
 
