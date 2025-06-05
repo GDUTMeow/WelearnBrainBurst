@@ -54,6 +54,9 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt # 假设你的依赖在 requirements.txt 中
 
+      - name: Get os type
+        run: |
+
       - name: Install dependencies and build for Linux
         if: matrix.os == 'ubuntu-latest'
         shell: bash
@@ -70,7 +73,7 @@ jobs:
       - name: Upload build output as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-${{ matrix.os }}
+          name: WelearnBrainBurst_${{ inputs.tag_version }}_${{ runner.os }}_x64
           path: |
             build/app.dist/**
           if-no-files-found: error
