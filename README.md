@@ -18,9 +18,10 @@
 
 （话说还有人记得加速世界嘛）
 
-## 开始使用
+## 使用文档（二选一）
 
-请看 https://gamernotitle.sg.larksuite.com/wiki/PLLywJxlViN31tkBiIflSaytgBg
+- https://gamernotitle.sg.larksuite.com/wiki/PLLywJxlViN31tkBiIflSaytgBg
+- https://scriptkid.notion.site/welearnbrainburst
 
 ## Credit
 
