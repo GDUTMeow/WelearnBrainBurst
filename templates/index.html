@@ -158,7 +158,7 @@
                                 </s-tbody>
                             </s-table>
                             <div id="course-list-container" style="display: none;">
-                                <s-divider> 单元列表 </s-divider>
+                                <s-divider> 单元列表 <span id="unit-list-title"></span> </s-divider>
                                 <s-table
                                     style="max-width: 100%; width: 100%; margin-top: 24px; margin-bottom: 24px; text-align: center;">
                                     <s-thead>
@@ -220,6 +220,9 @@
                                         <b>我同意：使用本项目造成的后果由使用者自行承担，作者不承担任何责任</b>
                                     </s-checkbox>
                                     <br>
+                                    <s-button id="clear-all-selections" style="background: linear-gradient(to right, #fb7185, #ef4444); color: #fff; margin-right: 8px;">
+                                        清除所有选择
+                                    </s-button>
                                     <s-button id="start-brain-burst" slot="trigger">开始刷课！</s-button>
                                     <s-button id="start-away-from-keyboard" slot="trigger">
                                         开始挂机！
@@ -241,6 +244,9 @@
     const selectedSections = new Map(); // Map<unitId, Set<sectionId>>
     const sectionsByUnit = new Map(); // Map<unitId, Map<sectionId, {id,name}>>
     const unitMeta = new Map(); // Map<unitId, {unitname,name,visible}>
+    // 当前选择的课本信息
+    let selectedCourseId = null;
+    let selectedCourseName = '';
         let shutdownFlag = false;
 
         // 兜底：如果 showToast 未注入，则提供一个简单的控制台回退
@@ -283,6 +289,13 @@
             if (headerAll) headerAll.checked = false;
         }
 
+        // 清除所有选择（单元与小节）
+        function clearAllSelections() {
+            clearAllUnitSelections();
+            clearAllSectionSelections();
+            updateSelectionSummary();
+        }
+
         function updateSelectionSummary() {
             const summary = document.getElementById('selection-summary');
             if (!summary) return;
@@ -291,6 +304,10 @@
             const parts = [];
             const unitSummaries = [];
             let totalSelected = 0;
+            // 顶部显示所选课本
+            if (selectedCourseName) {
+                parts.push(`<div>课本：${selectedCourseName}</div>`);
+            }
             selectedSections.forEach((set, unitId) => {
                 if (set.size > 0) {
                     hasSection = true;
@@ -327,9 +344,10 @@
                     const label = labelParts.join(' - ') || uid;
                     return `<li>${label} <span style="opacity:.7">(${uid})</span></li>`;
                 }).join('');
-                summary.innerHTML = `已选择类型：单元（数量：${selectedlessons.size}）<ul style="margin:6px 0 0 18px;">${items}</ul>`;
+                parts.push(`已选择类型：单元（数量：${selectedlessons.size}）<ul style="margin:6px 0 0 18px;">${items}</ul>`);
+                summary.innerHTML = parts.join('');
             } else {
-                summary.innerHTML = '尚未选择单元或小节';
+                summary.innerHTML = selectedCourseName ? `课本：${selectedCourseName}（尚未选择单元或小节）` : '尚未选择单元或小节';
             }
         }
 
@@ -505,6 +523,7 @@
                         type="filled-tonal" 
                         class="course-select-btn" 
                         data-course-id="${course.cid}"
+                        data-course-name="${course.name}"
                     >选择</s-button>
                 </s-td>
             </s-tr>
@@ -616,8 +635,11 @@
                 return false;
             }
         }
-                async function selectCourse(cid) {
+                                async function selectCourse(cid, cname) {
             document.getElementById('loading').style.display = 'block';
+                        // 记录当前选择的课本
+                        selectedCourseId = cid;
+                        selectedCourseName = cname || selectedCourseName || '';
             await fetch('/api/getLessons?cid=' + cid)
                 .then(res => res.json())
                 .then(data => {
@@ -646,6 +668,9 @@
             document.getElementById('loading').style.display = 'none';
             document.getElementById('course-list-container').style.display = 'block';
             document.getElementById('params-setup').style.display = 'block';
+                        // 更新单元列表分割器中的课本名称
+                        const unitTitle = document.getElementById('unit-list-title');
+                        if (unitTitle) unitTitle.textContent = selectedCourseName ? `(课本 ${selectedCourseName})` : '';
                         updateSelectionSummary();
         }
 
@@ -681,7 +706,10 @@
                 const metaMap = new Map();
                 data.sections.forEach(sec => metaMap.set(sec.id, { id: sec.id, name: (sec.location || sec.name || '') }));
                 sectionsByUnit.set(unitId, metaMap);
-                document.getElementById('section-list-title').textContent = `（单元 ${unitId}）`;
+                // 显示单元名称而非ID
+                const um = unitMeta.get(unitId) || {};
+                const unitLabel = [um.unitname, um.name].filter(Boolean).join(' - ') || unitId;
+                document.getElementById('section-list-title').textContent = `(单元 ${unitLabel})`;
                 document.getElementById('section-list-container').style.display = 'block';
                 // 根据当前勾选情况更新表头“全选”状态
                 const headerAll = document.getElementById('section-select-all');
@@ -845,6 +873,9 @@
             if (e.target.id === 'start-away-from-keyboard') {
                 handleTaskStart('away_from_keyboard');
             }
+            if (e.target.id === 'clear-all-selections') {
+                clearAllSelections();
+            }
         });
         // 单元“展开小节”按钮点击
         document.getElementById('lesson-list').addEventListener('click', function (e) {
@@ -899,7 +930,7 @@
         });
         document.getElementById('course-list').addEventListener('click', function (e) {
             const btn = e.target.closest('.course-select-btn');
-            if (btn) selectCourse(btn.dataset.courseId);
+            if (btn) selectCourse(btn.dataset.courseId, btn.dataset.courseName);
         });
 
         document.getElementById('reset-btn').addEventListener('click', reset);
