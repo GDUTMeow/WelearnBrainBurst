@@ -166,17 +166,37 @@
                                             <s-th>课程名称</s-th>
                                             <s-th>开放状态</s-th>
                                             <s-th>选择</s-th>
+                                            <s-th>展开小节</s-th>
                                         </s-tr>
                                     </s-thead>
                                     <s-tbody id="lesson-list">
                                         <!-- 单元列表 -->
                                     </s-tbody>
                                 </s-table>
+                                <div id="section-list-container" style="display:none; margin-top:16px;">
+                                    <s-divider> 小节列表 <span id="section-list-title"></span> </s-divider>
+                                    <s-table style="max-width: 100%; width: 100%; margin-top: 16px; margin-bottom: 24px; text-align: center;">
+                                        <s-thead>
+                                            <s-tr>
+                                                <s-th>小节ID</s-th>
+                                                <s-th>名称</s-th>
+                                                <s-th>状态</s-th>
+                                                <s-th>
+                                                    选择
+                                                    <s-checkbox id="section-select-all">全选</s-checkbox>
+                                                </s-th>
+                                            </s-tr>
+                                        </s-thead>
+                                        <s-tbody id="section-list"></s-tbody>
+                                    </s-table>
+                                </div>
                             </div>
                             <div id='params-setup' style="display: none;">
                                 <s-divider> 课程参数设置 </s-divider>
-                                <s-text-field style="display: grid; width: auto; margin-top: 24px; margin-bottom: 24px;"
+                                <s-text-field style="display: grid; width: auto; margin-top: 24px; margin-bottom: 12px;"
                                     label="正确率" id="correct-rate"></s-text-field>
+                                <s-text-field style="display: grid; width: auto; margin-top: 12px; margin-bottom: 24px;"
+                                    label="小节错开" id="section-offset"></s-text-field>
                                 <s-text-field style="display: grid; width: auto; margin-top: 24px; margin-bottom: 24px;"
                                     label="挂机时间" id="idle-time"></s-text-field>
                                 <div align="center">
@@ -194,11 +214,8 @@
                                         <b>我同意：使用本项目造成的后果由使用者自行承担，作者不承担任何责任</b>
                                     </s-checkbox>
                                     <br>
-                                    <s-snackbar style="margin-right: 24px; margin-top: 24px;"
-                                        id="start-brain-burst-tooltip">
-                                        <s-button id="start-brain-burst" slot="trigger">
-                                            开始刷课！
-                                        </s-button>
+                                    <s-snackbar style="margin-right: 24px; margin-top: 24px;" id="start-brain-burst-tooltip">
+                                        <s-button id="start-brain-burst" slot="trigger">开始刷课！</s-button>
                                     </s-snackbar>
                                     <s-snackbar style="margin-top: 24px;" id="start-away-from-keyboard-tooltip">
                                         <s-button id="start-away-from-keyboard" slot="trigger">
@@ -217,7 +234,8 @@
     <script src="https://unpkg.com/sober@1.0.6/dist/sober.min.js"></script>
     <script>
         let autoRefreshInterval = null;
-        let selectedlessons = new Set(); // 存储选中的单元ID
+    let selectedlessons = new Set(); // 存储选中的单元ID
+    const selectedSections = new Map(); // Map<unitId, Set<sectionId>>
         let shutdownFlag = false;
 
         function sleep(ms) {
@@ -489,12 +507,50 @@
           <s-td>
             <s-checkbox onchange=addlesson("${lesson.id}")>我要刷这个单元！</s-checkbox>
           </s-td>
+          <s-td>
+            <s-button class="expand-sections-btn" data-unit-id="${lesson.id}">展开小节</s-button>
+          </s-td>
         </s-tr>
                     `).join('');
                 });
             document.getElementById('loading').style.display = 'none';
             document.getElementById('course-list-container').style.display = 'block';
             document.getElementById('params-setup').style.display = 'block';
+        }
+
+        async function expandSections(unitId) {
+            document.getElementById('loading').style.display = 'block';
+            try {
+                const res = await fetch(`/api/getSections?unitId=${unitId}`);
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || '获取小节失败');
+                const tbody = document.getElementById('section-list');
+                const chosen = selectedSections.get(unitId) || new Set();
+                tbody.innerHTML = data.sections.map(sec => `
+                    <s-tr>
+                        <s-td>${sec.id}</s-td>
+                        <s-td>${sec.location || sec.name || ''}</s-td>
+                        <s-td>${sec.isvisible === 'false' ? '未开放' : (sec.iscomplete || '')}</s-td>
+                        <s-td>
+                            <s-checkbox class="section-checkbox" data-unit-id="${unitId}" data-sec-id="${sec.id}" ${chosen.has(sec.id) ? 'checked' : ''}>选择</s-checkbox>
+                        </s-td>
+                    </s-tr>
+                `).join('');
+                // 记录当前展示的小节所属单元
+                tbody.dataset.unitId = unitId;
+                document.getElementById('section-list-title').textContent = `（单元 ${unitId}）`;
+                document.getElementById('section-list-container').style.display = 'block';
+                // 根据当前勾选情况更新表头“全选”状态
+                const headerAll = document.getElementById('section-select-all');
+                if (headerAll) {
+                    const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
+                    headerAll.checked = cbs.length > 0 && cbs.every(cb => cb.checked);
+                }
+            } catch (e) {
+                console.warn(e);
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
         }
 
         async function handleTaskStart(taskType) {
@@ -541,6 +597,15 @@
                 type: taskType
             };
 
+            // 附带已选择的小节
+            if (selectedSections.size > 0) {
+                const obj = {};
+                selectedSections.forEach((set, unitId) => {
+                    if (set.size > 0) obj[unitId] = Array.from(set);
+                });
+                if (Object.keys(obj).length > 0) params.selectedSections = obj;
+            }
+
             // 类型特定验证
             if (taskType === 'brain_burst') {
                 const rate = document.getElementById('correct-rate').value;
@@ -552,6 +617,15 @@
                     return;
                 }
                 params.rate = rate;
+                const offset = document.getElementById('section-offset').value.trim();
+                if (offset) {
+                    if (!validateTime(offset)) {
+                        brainBurst.innerHTML = `小节错开时间格式错啦！
+<s-button id="start-brain-burst" slot="trigger">开始刷课！</s-button>`
+                        return;
+                    }
+                    params.offset = offset;
+                }
             } else {
                 const time = document.getElementById('idle-time').value;
                 if (!validateTime(time)) {
@@ -671,6 +745,45 @@
             if (e.target.id === 'start-away-from-keyboard') {
                 handleTaskStart('away_from_keyboard');
             }
+        });
+        // 单元“展开小节”按钮点击
+        document.getElementById('lesson-list').addEventListener('click', function (e) {
+            const btn = e.target.closest('.expand-sections-btn');
+            if (btn) {
+                const unitId = btn.dataset.unitId;
+                expandSections(unitId);
+            }
+        });
+        // 小节勾选
+        document.getElementById('section-list').addEventListener('click', function (e) {
+            const cb = e.target.closest('.section-checkbox');
+            if (!cb) return;
+            const unitId = cb.dataset.unitId;
+            const secId = cb.dataset.secId;
+            const set = selectedSections.get(unitId) || new Set();
+            if (cb.checked) set.add(secId); else set.delete(secId);
+            selectedSections.set(unitId, set);
+            // 更新表头“全选”勾选状态
+            const headerAll = document.getElementById('section-select-all');
+            if (headerAll) {
+                const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
+                headerAll.checked = cbs.length > 0 && cbs.every(x => x.checked);
+            }
+        });
+        // 表头“全选”处理
+        document.body.addEventListener('click', function (e) {
+            const headerAll = e.target.closest('#section-select-all');
+            if (!headerAll) return;
+            const tbody = document.getElementById('section-list');
+            const unitId = tbody.dataset.unitId;
+            const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
+            const set = new Set(selectedSections.get(unitId) || []);
+            cbs.forEach(cb => {
+                cb.checked = headerAll.checked;
+                const secId = cb.dataset.secId;
+                if (headerAll.checked) set.add(secId); else set.delete(secId);
+            });
+            selectedSections.set(unitId, set);
         });
         document.getElementById('course-list').addEventListener('click', function (e) {
             const btn = e.target.closest('.course-select-btn');
