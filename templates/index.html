@@ -28,6 +28,7 @@
         }
     </style>
     <link rel="stylesheet" href="/static/css/sober-theme.css">
+    <link rel="stylesheet" href="/static/css/toastify.css">
     <link rel="icon" href="/static/img/Nega_Nebulus_Logo.png">
 </head>
 
@@ -157,7 +158,7 @@
                                 </s-tbody>
                             </s-table>
                             <div id="course-list-container" style="display: none;">
-                                <s-divider> 单元列表 </s-divider>
+                                <s-divider> 单元列表 <span id="unit-list-title"></span> </s-divider>
                                 <s-table
                                     style="max-width: 100%; width: 100%; margin-top: 24px; margin-bottom: 24px; text-align: center;">
                                     <s-thead>
@@ -166,26 +167,51 @@
                                             <s-th>课程名称</s-th>
                                             <s-th>开放状态</s-th>
                                             <s-th>选择</s-th>
+                                            <s-th>展开小节</s-th>
                                         </s-tr>
                                     </s-thead>
                                     <s-tbody id="lesson-list">
                                         <!-- 单元列表 -->
                                     </s-tbody>
                                 </s-table>
+                                <div id="section-list-container" style="display:none; margin-top:16px;">
+                                    <s-divider> 小节列表 <span id="section-list-title"></span> </s-divider>
+                                    <s-table style="max-width: 100%; width: 100%; margin-top: 16px; margin-bottom: 24px; text-align: center;">
+                                        <s-thead>
+                                            <s-tr>
+                                                <s-th>小节ID</s-th>
+                                                <s-th>名称</s-th>
+                                                <s-th>状态</s-th>
+                                                <s-th>
+                                                    选择
+                                                    <s-checkbox id="section-select-all">全选</s-checkbox>
+                                                </s-th>
+                                            </s-tr>
+                                        </s-thead>
+                                        <s-tbody id="section-list"></s-tbody>
+                                    </s-table>
+                                </div>
                             </div>
                             <div id='params-setup' style="display: none;">
                                 <s-divider> 课程参数设置 </s-divider>
-                                <s-text-field style="display: grid; width: auto; margin-top: 24px; margin-bottom: 24px;"
+                                <s-text-field style="display: grid; width: auto; margin-top: 24px; margin-bottom: 12px;"
                                     label="正确率" id="correct-rate"></s-text-field>
+                                <s-text-field style="display: grid; width: auto; margin-top: 12px; margin-bottom: 24px;"
+                                    label="小节错开" id="section-offset"></s-text-field>
                                 <s-text-field style="display: grid; width: auto; margin-top: 24px; margin-bottom: 24px;"
                                     label="挂机时间" id="idle-time"></s-text-field>
                                 <div align="center">
                                     <p>正确率表示单元的每一节的正确率应该为多少，可以是确切的数值也可以是范围，例如 98 表示 98% 正确率，98-100 表示 98%-100% 正确率之间随机
                                     </p>
+                                    <p>小节错开指每个小节之间应该错开多久完成，可以填固定值也可以填范围，例如 20 表示每一小节都错开 20 秒，20-60 表示每一小节之间错开 20 秒到 60 秒间的一个随机值</p>
                                     <p>挂机时间表示单元的每一节要挂机多久，可以是确切的数值也可以是范围，例如 300 表示每一节都挂机 5 分钟，180-300 表示每一节挂机 180 秒到 300
                                         秒不等的时间</p>
                                 </div>
+                                <div align="left">
+                                    <s-alert id="selection-summary" style="margin-bottom: 12px; text-align: left; color: var(--md-sys-color-on-surface-variant); width: 100%;"></s-alert>
+                                </div>
                                 <div align="right" style="margin-top: 24px;">
+                                    <br>
                                     <s-checkbox id="freeToUse">
                                         <b>我同意：本项目仅供学习交流使用，不得用于任何商业用途，否则后果自负</b>
                                     </s-checkbox>
@@ -194,17 +220,13 @@
                                         <b>我同意：使用本项目造成的后果由使用者自行承担，作者不承担任何责任</b>
                                     </s-checkbox>
                                     <br>
-                                    <s-snackbar style="margin-right: 24px; margin-top: 24px;"
-                                        id="start-brain-burst-tooltip">
-                                        <s-button id="start-brain-burst" slot="trigger">
-                                            开始刷课！
-                                        </s-button>
-                                    </s-snackbar>
-                                    <s-snackbar style="margin-top: 24px;" id="start-away-from-keyboard-tooltip">
-                                        <s-button id="start-away-from-keyboard" slot="trigger">
-                                            开始挂机！
-                                        </s-button>
-                                    </s-snackbar>
+                                    <s-button id="clear-all-selections" style="background: linear-gradient(to right, #fb7185, #ef4444); color: #fff; margin-right: 8px;">
+                                        清除所有选择
+                                    </s-button>
+                                    <s-button id="start-brain-burst" slot="trigger">开始刷课！</s-button>
+                                    <s-button id="start-away-from-keyboard" slot="trigger">
+                                        开始挂机！
+                                    </s-button>
                                 </div>
                             </div>
                         </div>
@@ -214,11 +236,120 @@
         </s-drawer>
     </s-page>
 
-    <script src="https://unpkg.com/sober@1.0.6/dist/sober.min.js"></script>
+    <script src="/static/js/sober.min.js"></script>
+    <script src="/static/js/toastify.js"></script>
     <script>
         let autoRefreshInterval = null;
-        let selectedlessons = new Set(); // 存储选中的单元ID
+    let selectedlessons = new Set(); // 存储选中的单元ID
+    const selectedSections = new Map(); // Map<unitId, Set<sectionId>>
+    const sectionsByUnit = new Map(); // Map<unitId, Map<sectionId, {id,name}>>
+    const unitMeta = new Map(); // Map<unitId, {unitname,name,visible}>
+    // 当前选择的课本信息
+    let selectedCourseId = null;
+    let selectedCourseName = '';
         let shutdownFlag = false;
+
+        // 兜底：如果 showToast 未注入，则提供一个简单的控制台回退
+        window.showToast = window.showToast || function (message, type = 'info') {
+            try {
+                Toastify({
+                    text: message,
+                    duration: 3000,
+                    close: true,
+                    gravity: 'bottom',
+                    position: 'right',
+                    style: {
+                        background: type === 'error'
+                            ? 'linear-gradient(to right, #fb7185, #ef4444)'
+                            : (type === 'success'
+                                ? 'linear-gradient(to right, #34d399, #22d3ee)'
+                                : 'linear-gradient(to right, #6366f1, #3b82f6)'),
+                        borderRadius: '16px',
+                    },
+                    stopOnFocus: true,
+                }).showToast();
+            } catch (e) {
+                console.log(`[${type}] ${message}`);
+            }
+        }
+
+        function clearAllUnitSelections() {
+            selectedlessons.clear();
+            document.querySelectorAll('#lesson-list s-checkbox').forEach(cb => {
+                cb.checked = false;
+            });
+        }
+
+        function clearAllSectionSelections() {
+            selectedSections.clear();
+            document.querySelectorAll('#section-list .section-checkbox').forEach(cb => {
+                cb.checked = false;
+            });
+            const headerAll = document.getElementById('section-select-all');
+            if (headerAll) headerAll.checked = false;
+        }
+
+        // 清除所有选择（单元与小节）
+        function clearAllSelections() {
+            clearAllUnitSelections();
+            clearAllSectionSelections();
+            updateSelectionSummary();
+        }
+
+        function updateSelectionSummary() {
+            const summary = document.getElementById('selection-summary');
+            if (!summary) return;
+            // 是否选择了小节
+            let hasSection = false;
+            const parts = [];
+            const unitSummaries = [];
+            let totalSelected = 0;
+            // 顶部显示所选课本
+            if (selectedCourseName) {
+                parts.push(`<div>课本：${selectedCourseName}</div>`);
+            }
+            selectedSections.forEach((set, unitId) => {
+                if (set.size > 0) {
+                    hasSection = true;
+                    totalSelected += set.size;
+                    const secMap = sectionsByUnit.get(unitId) || new Map();
+                    const um = unitMeta.get(unitId) || {};
+                    const unitLabel = [um.unitname, um.name].filter(Boolean).join(' - ') || unitId;
+                    const items = Array.from(set).map(secId => {
+                        const meta = secMap.get(secId);
+                        const label = meta && meta.name ? meta.name : secId;
+                        return `<li>${label} <span style="opacity:.7">(${secId})</span></li>`;
+                    }).join('');
+                    unitSummaries.push(`
+                        <div style="margin-top:6px;">
+                            <b>单元：${unitLabel}</b>（数量：${set.size}）
+                            <ul style="margin:6px 0 0 18px;">${items}</ul>
+                        </div>
+                    `);
+                }
+            });
+            if (hasSection) {
+                parts.push(`<div>已选择类型：小节（总数量：${totalSelected}）</div>`);
+                parts.push(unitSummaries.join(''));
+                summary.innerHTML = parts.join('');
+                return;
+            }
+            // 退而判断单元：列出每个选中单元
+            if (selectedlessons.size > 0) {
+                const items = Array.from(selectedlessons).map(uid => {
+                    const meta = unitMeta.get(uid) || {};
+                    const labelParts = [];
+                    if (meta.unitname) labelParts.push(meta.unitname);
+                    if (meta.name) labelParts.push(meta.name);
+                    const label = labelParts.join(' - ') || uid;
+                    return `<li>${label} <span style="opacity:.7">(${uid})</span></li>`;
+                }).join('');
+                parts.push(`已选择类型：单元（数量：${selectedlessons.size}）<ul style="margin:6px 0 0 18px;">${items}</ul>`);
+                summary.innerHTML = parts.join('');
+            } else {
+                summary.innerHTML = selectedCourseName ? `课本：${selectedCourseName}（尚未选择单元或小节）` : '尚未选择单元或小节';
+            }
+        }
 
         function sleep(ms) {
             return new Promise(resolve => setTimeout(resolve, ms));
@@ -228,10 +359,18 @@
         function addlesson(lessonId) {
             const checkbox = document.querySelector(`s-checkbox[onchange*="${lessonId}"]`);
             if (checkbox.checked) {
+                // 若此前已选择了小节，则切换为“按单元”模式，清空小节选择
+                let hasSections = false;
+                selectedSections.forEach(set => { if (set.size > 0) hasSections = true; });
+                if (hasSections) {
+                    clearAllSectionSelections();
+                    showToast('已切换为「单元」模式：已清除已选小节');
+                }
                 selectedlessons.add(lessonId);
             } else {
                 selectedlessons.delete(lessonId);
             }
+            updateSelectionSummary();
         }
 
         // 验证正确率格式（0-100 或 A-B）
@@ -384,6 +523,7 @@
                         type="filled-tonal" 
                         class="course-select-btn" 
                         data-course-id="${course.cid}"
+                        data-course-name="${course.name}"
                     >选择</s-button>
                 </s-td>
             </s-tr>
@@ -401,11 +541,21 @@
             localStorage.setItem('cookie', cookie);
             localStorage.setItem('lastModified', new Date().toLocaleString());
             document.getElementById('lastModified').textContent = `上次保存：${localStorage.getItem('lastModified')}`;
-            await fetch('/api/login', {
+            const loginRes = await fetch('/api/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ cookies: cookie })
             });
+            try {
+                const data = await loginRes.json();
+                if (data && data.success) {
+                    showToast('登录成功', 'success');
+                    // 标记本次为手动登录，避免触发自动登录提示
+                    sessionStorage.setItem('manualLoginJustNow', '1');
+                } else {
+                    showToast(`登录失败：${data && data.error ? data.error : '未知错误'}`, 'error');
+                }
+            } catch (e) { /* ignore */ }
             document.getElementById('loading').style.display = 'none';
             if (checkLogon()) {
                 loadCourses();
@@ -459,6 +609,18 @@
                         `欢迎回来，${userData.name} (${userData.student_id})！`;
                     document.getElementById('onlineStatus').textContent =
                         '在线状态：🟢 已登录';
+                    // 页面加载后的自动登录成功提示（仅提示一次），手动登录不提示
+                    const manual = sessionStorage.getItem('manualLoginJustNow');
+                    if (!manual) {
+                        const autoLoginToasted = sessionStorage.getItem('autoLoginToasted');
+                        if (!autoLoginToasted) {
+                            showToast('自动登录成功', 'success');
+                            sessionStorage.setItem('autoLoginToasted', '1');
+                        }
+                    } else {
+                        // 清理手动登录标记，避免下次误判
+                        sessionStorage.removeItem('manualLoginJustNow');
+                    }
                     return true;
                 } else {
                     document.getElementById('dashboard').style.display = 'none';
@@ -473,14 +635,22 @@
                 return false;
             }
         }
-        async function selectCourse(cid) {
+                                async function selectCourse(cid, cname) {
             document.getElementById('loading').style.display = 'block';
+                        // 记录当前选择的课本
+                        selectedCourseId = cid;
+                        selectedCourseName = cname || selectedCourseName || '';
             await fetch('/api/getLessons?cid=' + cid)
                 .then(res => res.json())
                 .then(data => {
                     console.log(data)
                     const tbody = document.getElementById('lesson-list');
                     selectedlessons.clear();
+                                        // 记录单元元数据供摘要使用
+                                        unitMeta.clear();
+                                        (data.lessons || []).forEach(lesson => {
+                                                unitMeta.set(lesson.id, { unitname: lesson.unitname, name: lesson.name, visible: lesson.visible });
+                                        });
                     tbody.innerHTML = data.lessons.map(lesson => `
         <s-tr>
           <s-td>${lesson.id}</s-td>
@@ -489,12 +659,70 @@
           <s-td>
             <s-checkbox onchange=addlesson("${lesson.id}")>我要刷这个单元！</s-checkbox>
           </s-td>
+          <s-td>
+            <s-button class="expand-sections-btn" data-unit-id="${lesson.id}">展开小节</s-button>
+          </s-td>
         </s-tr>
                     `).join('');
                 });
             document.getElementById('loading').style.display = 'none';
             document.getElementById('course-list-container').style.display = 'block';
             document.getElementById('params-setup').style.display = 'block';
+                        // 更新单元列表分割器中的课本名称
+                        const unitTitle = document.getElementById('unit-list-title');
+                        if (unitTitle) unitTitle.textContent = selectedCourseName ? `(课本 ${selectedCourseName})` : '';
+                        updateSelectionSummary();
+        }
+
+        async function expandSections(unitId) {
+            document.getElementById('loading').style.display = 'block';
+            try {
+                const res = await fetch(`/api/getSections?unitId=${unitId}`);
+                const data = await res.json();
+                if (!data.success) { showToast(`获取小节失败：${data.error || ''}`, 'error'); throw new Error(data.error || '获取小节失败'); }
+                const tbody = document.getElementById('section-list');
+                // 如果展开了不同的单元，则清空之前已选择的小节
+                const prevUnitId = tbody.dataset.unitId;
+                if (prevUnitId && prevUnitId !== unitId) {
+                    selectedSections.clear();
+                }
+                // 展开小节后，清除单元的复选框与记录
+                selectedlessons.clear();
+                document.querySelectorAll('#lesson-list s-checkbox').forEach(cb => { cb.checked = false; });
+                const chosen = selectedSections.get(unitId) || new Set();
+                tbody.innerHTML = data.sections.map(sec => `
+                    <s-tr>
+                        <s-td>${sec.id}</s-td>
+                        <s-td>${sec.location || sec.name || ''}</s-td>
+                        <s-td>${sec.isvisible === 'false' ? '未开放' : (sec.iscomplete || '')}</s-td>
+                        <s-td>
+                            <s-checkbox class="section-checkbox" data-unit-id="${unitId}" data-sec-id="${sec.id}" ${chosen.has(sec.id) ? 'checked' : ''}>选择</s-checkbox>
+                        </s-td>
+                    </s-tr>
+                `).join('');
+                // 记录当前展示的小节所属单元
+                tbody.dataset.unitId = unitId;
+                // 存储该单元小节的元数据，供摘要展示
+                const metaMap = new Map();
+                data.sections.forEach(sec => metaMap.set(sec.id, { id: sec.id, name: (sec.location || sec.name || '') }));
+                sectionsByUnit.set(unitId, metaMap);
+                // 显示单元名称而非ID
+                const um = unitMeta.get(unitId) || {};
+                const unitLabel = [um.unitname, um.name].filter(Boolean).join(' - ') || unitId;
+                document.getElementById('section-list-title').textContent = `(单元 ${unitLabel})`;
+                document.getElementById('section-list-container').style.display = 'block';
+                // 根据当前勾选情况更新表头“全选”状态
+                const headerAll = document.getElementById('section-select-all');
+                if (headerAll) {
+                    const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
+                    headerAll.checked = cbs.length > 0 && cbs.every(cb => cb.checked);
+                }
+                updateSelectionSummary();
+            } catch (e) {
+                console.warn(e);
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
         }
 
         async function handleTaskStart(taskType) {
@@ -503,62 +731,58 @@
             // 验证必填项
             if (!document.getElementById('freeToUse').checked ||
                 !document.getElementById('disclaimer').checked) {
-                if (taskType === 'brain_burst') {
-                    brainBurst.innerHTML = `请先同意使用协议和免责声明！
-<s-button id="start-brain-burst" slot="trigger">
-    开始刷课！
-</s-button>`
-                }
-                if (taskType === 'away_from_keyboard') {
-                    awayFromKeyboard.innerHTML = `请先同意使用协议和免责声明！
-<s-button id="start-away-from-keyboard" slot="trigger">
-    开始挂机！
-</s-button>`
-                }
+                showToast('请先同意使用协议和免责声明！', 'error');
                 return;
             }
 
-            // 验证单元选择
-            if (selectedlessons.size === 0) {
-                if (taskType === 'brain_burst') {
-                    brainBurst.innerHTML = `请至少选择一个单元！
-<s-button id="start-brain-burst" slot="trigger">
-    开始刷课！
-</s-button>`
-                }
-                if (taskType === 'away_from_keyboard') {
-                    awayFromKeyboard.innerHTML = `请至少选择一个单元！
-<s-button id="start-away-from-keyboard" slot="trigger">
-    开始挂机！
-</s-button>`
-                }
+            // 验证至少选择了单元或小节
+            let hasSections = false;
+            selectedSections.forEach((set) => { if (set.size > 0) hasSections = true; });
+            if (selectedlessons.size === 0 && !hasSections) {
+                showToast('请至少选择一个单元或小节！', 'error');
                 return;
             }
 
             // 获取参数
             const params = {
-                lessonIds: Array.from(selectedlessons),
+                lessonIds: [],
                 type: taskType
             };
+
+            // 附带已选择的小节
+            const obj = {};
+            selectedSections.forEach((set, unitId) => {
+                if (set.size > 0) obj[unitId] = Array.from(set);
+            });
+            if (Object.keys(obj).length > 0) {
+                params.selectedSections = obj;
+                // 当选择了小节时，只以这些单元作为 lessonIds，避免误处理整单元
+                params.lessonIds = Object.keys(obj);
+            } else {
+                // 未选择小节时，按选中的单元执行
+                params.lessonIds = Array.from(selectedlessons);
+            }
 
             // 类型特定验证
             if (taskType === 'brain_burst') {
                 const rate = document.getElementById('correct-rate').value;
                 if (!validateRate(rate)) {
-                    brainBurst.innerHTML = `正确率格式错啦！
-<s-button id="start-brain-burst" slot="trigger">
-    开始刷课！
-</s-button>`
+                    showToast('正确率格式错啦！', 'error');
                     return;
                 }
                 params.rate = rate;
+                const offset = document.getElementById('section-offset').value.trim();
+                if (offset) {
+                    if (!validateTime(offset)) {
+                        showToast('小节错开时间格式错啦！', 'error');
+                        return;
+                    }
+                    params.offset = offset;
+                }
             } else {
                 const time = document.getElementById('idle-time').value;
                 if (!validateTime(time)) {
-                    awayFromKeyboard.innerHTML = `时间格式错啦！
-<s-button id="start-away-from-keyboard" slot="trigger">
-    开始挂机！
-</s-button>`
+                    showToast('时间格式错啦！', 'error');
                     return;
                 }
                 params.time = time;
@@ -578,33 +802,11 @@
                     throw new Error('请求失败');
                 }
                 else {
-                    if (taskType === 'brain_burst') {
-                        brainBurst.innerHTML = `任务已启动！
-<s-button id="start-brain-burst" slot="trigger">
-    开始刷课！
-</s-button>`
-                    }
-                    if (taskType === 'away_from_keyboard') {
-                        awayFromKeyboard.innerHTML = `任务已启动！
-<s-button id="start-away-from-keyboard" slot="trigger">
-    开始挂机！
-</s-button>`
-                    }
+                    showToast('任务已启动！', 'success');
                 }
             } catch (error) {
                 console.warn('任务启动失败:', error);
-                if (taskType === 'brain_burst') {
-                    brainBurst.innerHTML = `任务启动失败，请重试或查看控制台！
-<s-button id="start-brain-burst" slot="trigger">
-    开始刷课！
-</s-button>`
-                }
-                if (taskType === 'away_from_keyboard') {
-                    awayFromKeyboard.innerHTML = `任务启动失败，请重试或查看控制台！
-<s-button id="start-away-from-keyboard" slot="trigger">
-    开始挂机！
-</s-button>`
-                }
+                showToast('任务启动失败，请重试或查看控制台！', 'error');
                 document.getElementById('loading').style.display = 'none';
                 return;
             } finally {
@@ -671,10 +873,64 @@
             if (e.target.id === 'start-away-from-keyboard') {
                 handleTaskStart('away_from_keyboard');
             }
+            if (e.target.id === 'clear-all-selections') {
+                clearAllSelections();
+            }
+        });
+        // 单元“展开小节”按钮点击
+        document.getElementById('lesson-list').addEventListener('click', function (e) {
+            const btn = e.target.closest('.expand-sections-btn');
+            if (btn) {
+                const unitId = btn.dataset.unitId;
+                expandSections(unitId);
+            }
+        });
+        // 小节勾选
+        document.getElementById('section-list').addEventListener('click', function (e) {
+            const cb = e.target.closest('.section-checkbox');
+            if (!cb) return;
+            const unitId = cb.dataset.unitId;
+            const secId = cb.dataset.secId;
+            // 若此前已选择了单元，而当前勾选小节 -> 切换为“按小节”模式，清空单元选择
+            if (cb.checked && selectedlessons.size > 0) {
+                clearAllUnitSelections();
+                showToast('已切换为「小节」模式：已清除已选单元');
+            }
+            const set = selectedSections.get(unitId) || new Set();
+            if (cb.checked) set.add(secId); else set.delete(secId);
+            selectedSections.set(unitId, set);
+            // 更新表头“全选”勾选状态
+            const headerAll = document.getElementById('section-select-all');
+            if (headerAll) {
+                const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
+                headerAll.checked = cbs.length > 0 && cbs.every(x => x.checked);
+            }
+            updateSelectionSummary();
+        });
+        // 表头“全选”处理
+        document.body.addEventListener('click', function (e) {
+            const headerAll = e.target.closest('#section-select-all');
+            if (!headerAll) return;
+            const tbody = document.getElementById('section-list');
+            const unitId = tbody.dataset.unitId;
+            const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
+            const set = new Set(selectedSections.get(unitId) || []);
+            // 若此前已选择了单元，而当前执行小节“全选” -> 切换为“按小节”模式
+            if (headerAll.checked && selectedlessons.size > 0) {
+                clearAllUnitSelections();
+                showToast('已切换为「小节」模式：已清除已选单元');
+            }
+            cbs.forEach(cb => {
+                cb.checked = headerAll.checked;
+                const secId = cb.dataset.secId;
+                if (headerAll.checked) set.add(secId); else set.delete(secId);
+            });
+            selectedSections.set(unitId, set);
+            updateSelectionSummary();
         });
         document.getElementById('course-list').addEventListener('click', function (e) {
             const btn = e.target.closest('.course-select-btn');
-            if (btn) selectCourse(btn.dataset.courseId);
+            if (btn) selectCourse(btn.dataset.courseId, btn.dataset.courseName);
         });
 
         document.getElementById('reset-btn').addEventListener('click', reset);

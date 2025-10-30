@@ -432,6 +432,40 @@ def get_lessons():
         return jsonify(success=False, error=str(e))
 
 
+@app.route("/api/getSections", methods=["GET"])
+def get_sections():
+    """获取某单元下的小节列表"""
+    if not state.cookies or state.task_status == "nologon":
+        log_message("用户未登录", "APPERR")
+        return jsonify(success=False, error="请先登录")
+
+    try:
+        unit_id = request.args.get("unitId")
+        if not unit_id:
+            return jsonify(success=False, error="缺少参数 unitId")
+
+        # 计算单元索引
+        try:
+            unit_index = _global.lessonIndex.index(unit_id)
+        except ValueError:
+            return jsonify(success=False, error="无效的 unitId")
+
+        url = (
+            f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={_global.cid}&uid={_global.uid}&unitidx={unit_index}&classid={_global.classid}"
+        )
+        response = client.get(
+            url,
+            headers={
+                "Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}"
+            },
+        )
+        log_message(f"获取小节列表: {response.text}", "APPDEBUG")
+        sections = response.json().get("info", [])
+        return jsonify(success=True, error="", sections=sections)
+    except Exception as e:
+        return jsonify(success=False, error=str(e))
+
+
 @app.route("/api/startTask", methods=["POST"])
 def start_task():
     """启动任务接口"""
@@ -446,10 +480,13 @@ def start_task():
 
         if task_type == "brain_burst":
             rate = data["rate"]
-            thread = BrainBurstThread(lessons, rate)
+            selected_sections = data.get("selectedSections")
+            offset = data.get("offset")
+            thread = BrainBurstThread(lessons, rate, selected_sections, offset)
         elif task_type == "away_from_keyboard":
             duration = data["time"]
-            thread = AwayFromKeyboardThread(lessons, duration)
+            selected_sections = data.get("selectedSections")
+            thread = AwayFromKeyboardThread(lessons, duration, selected_sections)
         else:
             return jsonify(success=False, error="未知任务类型")
 
@@ -484,6 +521,16 @@ def get_status():
             "success": True,
         }
     )
+
+
+@app.route("/api/getLog", methods=["GET"])
+def get_log():
+    """返回当前日志缓冲内容"""
+    try:
+        logs = state.log_buffer.getvalue()
+        return jsonify(success=True, logs=logs)
+    except Exception as e:
+        return jsonify(success=False, error=str(e), logs="")
 
 
 @app.route("/api/getUserInfo", methods=["GET"])
@@ -521,11 +568,19 @@ def validate_cookies(cookies: Dict[str, str]) -> bool:
 class BrainBurstThread(threading.Thread):
     """智能刷课线程"""
 
-    def __init__(self, lessonIds: List[str], rate: int | str):
+    def __init__(
+        self,
+        lessonIds: List[str],
+        rate: int | str,
+        selectedSections: Optional[Dict[str, List[str]]] = None,
+        offset: Optional[str] = None,
+    ):
         super().__init__()
         self.daemon = True
         self.lessonIds = lessonIds
         self.rate = int(rate) if "-" not in rate else tuple(map(int, rate.split("-")))
+        self.selectedSections = selectedSections or {}
+        self.offset = offset
 
     def run(self):
         try:
@@ -533,6 +588,8 @@ class BrainBurstThread(threading.Thread):
             infoHeaders = {
                 "Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}",
             }
+            # 重新计算总数
+            state.progress = {"current": 0, "total": 0}
             for lesson in self.lessonIds:  # 获取课程详细列表
                 response = client.get(
                     f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={_global.cid}&uid={_global.uid}&unitidx={_global.lessonIndex.index(lesson)}&classid={_global.classid}",
@@ -545,11 +602,14 @@ class BrainBurstThread(threading.Thread):
                         f"获取课程 {lesson} 详细列表失败: {response.text}", "APPERR"
                     )
                     return
-                state.progress = {
-                    "current": state.progress["current"],
-                    "total": len(response.json()["info"]) * len(self.lessonIds),
-                }
-                for section in response.json()["info"]:  # 获取课程的小节列表并刷课
+                sections = response.json()["info"]
+                # 仅处理选择的小节（如果有）
+                if lesson in self.selectedSections and self.selectedSections[lesson]:
+                    wanted = set(self.selectedSections[lesson])
+                    sections = [s for s in sections if s.get("id") in wanted]
+                # 累加总数
+                state.progress["total"] += len(sections)
+                for section in sections:  # 获取课程的小节列表并刷课
                     log_message(
                         f"获取到课程 {lesson} 的详细信息 {response.json()}", "APPDEBUG"
                     )
@@ -602,6 +662,16 @@ class BrainBurstThread(threading.Thread):
                             )
                             # 第 N 类刷课法 neta 了高数的第 N 类积分法
                             state.progress["current"] += 1
+                            # 小节错开（仅刷课模式）
+                            if self.offset:
+                                try:
+                                    if "-" in self.offset:
+                                        a, b = map(int, self.offset.split("-"))
+                                        time.sleep(random.uniform(a, b))
+                                    else:
+                                        time.sleep(int(self.offset))
+                                except Exception:
+                                    pass
                             continue
                         else:  # 第二种刷课法
                             response = client.post(
@@ -627,6 +697,15 @@ class BrainBurstThread(threading.Thread):
                                     "APPINFO",
                                 )
                                 state.progress["current"] += 1
+                                if self.offset:
+                                    try:
+                                        if "-" in self.offset:
+                                            a, b = map(int, self.offset.split("-"))
+                                            time.sleep(random.uniform(a, b))
+                                        else:
+                                            time.sleep(int(self.offset))
+                                    except Exception:
+                                        pass
                                 continue
                     else:
                         state.progress["current"] += 1
@@ -642,7 +721,7 @@ class BrainBurstThread(threading.Thread):
 class AwayFromKeyboardThread(threading.Thread):
     """挂机刷时长线程"""
 
-    def __init__(self, lessonIds: List[str], duration: str):
+    def __init__(self, lessonIds: List[str], duration: str, selectedSections: Optional[Dict[str, List[str]]] = None):
         super().__init__()
         self.lessonIds = lessonIds
         self.duration = duration
@@ -651,6 +730,7 @@ class AwayFromKeyboardThread(threading.Thread):
         self.max_threads = 64
         self.retry_delay = 3
         self.max_retries = 100
+        self.selectedSections = selectedSections or {}
 
     def _http_request_with_retry(self, method, url, **kwargs):
         """带有重试机制的 HTTP 请求"""
@@ -715,6 +795,7 @@ class AwayFromKeyboardThread(threading.Thread):
             else:
                 session_time = total_time = "0"
 
+            # 选择目标学习时长（单位：秒）
             learn_time = (
                 random.randint(*map(int, self.duration.split("-")))
                 if "-" in self.duration
@@ -748,8 +829,8 @@ class AwayFromKeyboardThread(threading.Thread):
                             "uid": _global.uid,
                             "cid": _global.cid,
                             "scoid": scoid,
-                            "session_time": str(int(session_time) + current_time),
-                            "total_time": str(int(total_time) + current_time),
+                            "session_time": str(int(session_time)),
+                            "total_time": str(int(total_time)),
                         },
                         headers={
                             "Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"
@@ -788,10 +869,14 @@ class AwayFromKeyboardThread(threading.Thread):
         """线程主函数"""
         try:
             state.task_status = "away_from_keyboard"
-            total_lessons = 0
+
+            # 预加载所有选择单元的小节以计算总任务数，并保持与文档描述一致
+            units_sections: List[List[Dict[str, Any]]] = []
+            total_sections = 0
 
             for lesson_id in self.lessonIds:
                 unit_index = _global.lessonIndex.index(lesson_id)
+                sections = []
                 while not state.stop_event.is_set():
                     try:
                         response = self._http_request_with_retry(
@@ -805,19 +890,25 @@ class AwayFromKeyboardThread(threading.Thread):
                         break
                     except Exception:
                         time.sleep(self.retry_delay)
-
                 if state.stop_event.is_set():
                     return
+                # 过滤未开放小节
+                visible_sections = [s for s in sections if s.get("isvisible") != "false"]
+                # 如指定了选择的小节，则仅保留这些
+                if lesson_id in self.selectedSections and self.selectedSections[lesson_id]:
+                    wanted = set(self.selectedSections[lesson_id])
+                    visible_sections = [s for s in visible_sections if s.get("id") in wanted]
+                units_sections.append(visible_sections)
+                total_sections += len(visible_sections)
 
-                total_lessons += len(sections)
-                state.progress["total"] = total_lessons
+            state.progress["total"] = total_sections
 
+            # 并发处理每个单元的小节
+            for sections in units_sections:
                 thread_pool = []
                 for section in sections:
                     if state.stop_event.is_set():
                         break
-                    if section["isvisible"] == "false":
-                        continue
                     while len(thread_pool) >= self.max_threads:
                         thread_pool = [t for t in thread_pool if t.is_alive()]
                         time.sleep(1)
