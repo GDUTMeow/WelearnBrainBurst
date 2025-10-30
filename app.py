@@ -485,7 +485,8 @@ def start_task():
             thread = BrainBurstThread(lessons, rate, selected_sections, offset)
         elif task_type == "away_from_keyboard":
             duration = data["time"]
-            thread = AwayFromKeyboardThread(lessons, duration)
+            selected_sections = data.get("selectedSections")
+            thread = AwayFromKeyboardThread(lessons, duration, selected_sections)
         else:
             return jsonify(success=False, error="未知任务类型")
 
@@ -720,7 +721,7 @@ class BrainBurstThread(threading.Thread):
 class AwayFromKeyboardThread(threading.Thread):
     """挂机刷时长线程"""
 
-    def __init__(self, lessonIds: List[str], duration: str):
+    def __init__(self, lessonIds: List[str], duration: str, selectedSections: Optional[Dict[str, List[str]]] = None):
         super().__init__()
         self.lessonIds = lessonIds
         self.duration = duration
@@ -729,6 +730,7 @@ class AwayFromKeyboardThread(threading.Thread):
         self.max_threads = 64
         self.retry_delay = 3
         self.max_retries = 100
+        self.selectedSections = selectedSections or {}
 
     def _http_request_with_retry(self, method, url, **kwargs):
         """带有重试机制的 HTTP 请求"""
@@ -890,8 +892,12 @@ class AwayFromKeyboardThread(threading.Thread):
                         time.sleep(self.retry_delay)
                 if state.stop_event.is_set():
                     return
-                # 过滤未开放小节不计入总数
+                # 过滤未开放小节
                 visible_sections = [s for s in sections if s.get("isvisible") != "false"]
+                # 如指定了选择的小节，则仅保留这些
+                if lesson_id in self.selectedSections and self.selectedSections[lesson_id]:
+                    wanted = set(self.selectedSections[lesson_id])
+                    visible_sections = [s for s in visible_sections if s.get("id") in wanted]
                 units_sections.append(visible_sections)
                 total_sections += len(visible_sections)
 

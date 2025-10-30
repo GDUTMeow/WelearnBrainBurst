@@ -202,10 +202,15 @@
                                 <div align="center">
                                     <p>正确率表示单元的每一节的正确率应该为多少，可以是确切的数值也可以是范围，例如 98 表示 98% 正确率，98-100 表示 98%-100% 正确率之间随机
                                     </p>
+                                    <p>小节错开指每个小节之间应该错开多久完成，可以填固定值也可以填范围，例如 20 表示每一小节都错开 20 秒，20-60 表示每一小节之间错开 20 秒到 60 秒间的一个随机值</p>
                                     <p>挂机时间表示单元的每一节要挂机多久，可以是确切的数值也可以是范围，例如 300 表示每一节都挂机 5 分钟，180-300 表示每一节挂机 180 秒到 300
                                         秒不等的时间</p>
                                 </div>
+                                <div align="left">
+                                    <s-alert id="selection-summary" style="margin-bottom: 12px; text-align: left; color: var(--md-sys-color-on-surface-variant); width: 100%;"></s-alert>
+                                </div>
                                 <div align="right" style="margin-top: 24px;">
+                                    <br>
                                     <s-checkbox id="freeToUse">
                                         <b>我同意：本项目仅供学习交流使用，不得用于任何商业用途，否则后果自负</b>
                                     </s-checkbox>
@@ -231,12 +236,64 @@
         </s-drawer>
     </s-page>
 
-    <script src="https://unpkg.com/sober@1.0.6/dist/sober.min.js"></script>
+    <script src="https://unpkg.com/sober@1.1.0/dist/sober.min.js"></script>
     <script>
         let autoRefreshInterval = null;
     let selectedlessons = new Set(); // 存储选中的单元ID
     const selectedSections = new Map(); // Map<unitId, Set<sectionId>>
+    const sectionsByUnit = new Map(); // Map<unitId, Map<sectionId, {id,name}>>
+    const unitMeta = new Map(); // Map<unitId, {unitname,name,visible}>
         let shutdownFlag = false;
+
+        function updateSelectionSummary() {
+            const summary = document.getElementById('selection-summary');
+            if (!summary) return;
+            // 是否选择了小节
+            let hasSection = false;
+            const parts = [];
+            const unitSummaries = [];
+            let totalSelected = 0;
+            selectedSections.forEach((set, unitId) => {
+                if (set.size > 0) {
+                    hasSection = true;
+                    totalSelected += set.size;
+                    const secMap = sectionsByUnit.get(unitId) || new Map();
+                    const um = unitMeta.get(unitId) || {};
+                    const unitLabel = [um.unitname, um.name].filter(Boolean).join(' - ') || unitId;
+                    const items = Array.from(set).map(secId => {
+                        const meta = secMap.get(secId);
+                        const label = meta && meta.name ? meta.name : secId;
+                        return `<li>${label} <span style="opacity:.7">(${secId})</span></li>`;
+                    }).join('');
+                    unitSummaries.push(`
+                        <div style="margin-top:6px;">
+                            <b>单元：${unitLabel}</b>（数量：${set.size}）
+                            <ul style="margin:6px 0 0 18px;">${items}</ul>
+                        </div>
+                    `);
+                }
+            });
+            if (hasSection) {
+                parts.push(`<div>已选择类型：小节（总数量：${totalSelected}）</div>`);
+                parts.push(unitSummaries.join(''));
+                summary.innerHTML = parts.join('');
+                return;
+            }
+            // 退而判断单元：列出每个选中单元
+            if (selectedlessons.size > 0) {
+                const items = Array.from(selectedlessons).map(uid => {
+                    const meta = unitMeta.get(uid) || {};
+                    const labelParts = [];
+                    if (meta.unitname) labelParts.push(meta.unitname);
+                    if (meta.name) labelParts.push(meta.name);
+                    const label = labelParts.join(' - ') || uid;
+                    return `<li>${label} <span style="opacity:.7">(${uid})</span></li>`;
+                }).join('');
+                summary.innerHTML = `已选择类型：单元（数量：${selectedlessons.size}）<ul style="margin:6px 0 0 18px;">${items}</ul>`;
+            } else {
+                summary.innerHTML = '尚未选择单元或小节';
+            }
+        }
 
         function sleep(ms) {
             return new Promise(resolve => setTimeout(resolve, ms));
@@ -250,6 +307,7 @@
             } else {
                 selectedlessons.delete(lessonId);
             }
+            updateSelectionSummary();
         }
 
         // 验证正确率格式（0-100 或 A-B）
@@ -491,7 +549,7 @@
                 return false;
             }
         }
-        async function selectCourse(cid) {
+                async function selectCourse(cid) {
             document.getElementById('loading').style.display = 'block';
             await fetch('/api/getLessons?cid=' + cid)
                 .then(res => res.json())
@@ -499,6 +557,11 @@
                     console.log(data)
                     const tbody = document.getElementById('lesson-list');
                     selectedlessons.clear();
+                                        // 记录单元元数据供摘要使用
+                                        unitMeta.clear();
+                                        (data.lessons || []).forEach(lesson => {
+                                                unitMeta.set(lesson.id, { unitname: lesson.unitname, name: lesson.name, visible: lesson.visible });
+                                        });
                     tbody.innerHTML = data.lessons.map(lesson => `
         <s-tr>
           <s-td>${lesson.id}</s-td>
@@ -516,6 +579,7 @@
             document.getElementById('loading').style.display = 'none';
             document.getElementById('course-list-container').style.display = 'block';
             document.getElementById('params-setup').style.display = 'block';
+                        updateSelectionSummary();
         }
 
         async function expandSections(unitId) {
@@ -525,6 +589,14 @@
                 const data = await res.json();
                 if (!data.success) throw new Error(data.error || '获取小节失败');
                 const tbody = document.getElementById('section-list');
+                // 如果展开了不同的单元，则清空之前已选择的小节
+                const prevUnitId = tbody.dataset.unitId;
+                if (prevUnitId && prevUnitId !== unitId) {
+                    selectedSections.clear();
+                }
+                // 展开小节后，清除单元的复选框与记录
+                selectedlessons.clear();
+                document.querySelectorAll('#lesson-list s-checkbox').forEach(cb => { cb.checked = false; });
                 const chosen = selectedSections.get(unitId) || new Set();
                 tbody.innerHTML = data.sections.map(sec => `
                     <s-tr>
@@ -538,6 +610,10 @@
                 `).join('');
                 // 记录当前展示的小节所属单元
                 tbody.dataset.unitId = unitId;
+                // 存储该单元小节的元数据，供摘要展示
+                const metaMap = new Map();
+                data.sections.forEach(sec => metaMap.set(sec.id, { id: sec.id, name: (sec.location || sec.name || '') }));
+                sectionsByUnit.set(unitId, metaMap);
                 document.getElementById('section-list-title').textContent = `（单元 ${unitId}）`;
                 document.getElementById('section-list-container').style.display = 'block';
                 // 根据当前勾选情况更新表头“全选”状态
@@ -546,6 +622,7 @@
                     const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
                     headerAll.checked = cbs.length > 0 && cbs.every(cb => cb.checked);
                 }
+                updateSelectionSummary();
             } catch (e) {
                 console.warn(e);
             } finally {
@@ -574,8 +651,10 @@
                 return;
             }
 
-            // 验证单元选择
-            if (selectedlessons.size === 0) {
+            // 验证至少选择了单元或小节
+            let hasSections = false;
+            selectedSections.forEach((set) => { if (set.size > 0) hasSections = true; });
+            if (selectedlessons.size === 0 && !hasSections) {
                 if (taskType === 'brain_burst') {
                     brainBurst.innerHTML = `请至少选择一个单元！
 <s-button id="start-brain-burst" slot="trigger">
@@ -593,17 +672,22 @@
 
             // 获取参数
             const params = {
-                lessonIds: Array.from(selectedlessons),
+                lessonIds: [],
                 type: taskType
             };
 
             // 附带已选择的小节
-            if (selectedSections.size > 0) {
-                const obj = {};
-                selectedSections.forEach((set, unitId) => {
-                    if (set.size > 0) obj[unitId] = Array.from(set);
-                });
-                if (Object.keys(obj).length > 0) params.selectedSections = obj;
+            const obj = {};
+            selectedSections.forEach((set, unitId) => {
+                if (set.size > 0) obj[unitId] = Array.from(set);
+            });
+            if (Object.keys(obj).length > 0) {
+                params.selectedSections = obj;
+                // 当选择了小节时，只以这些单元作为 lessonIds，避免误处理整单元
+                params.lessonIds = Object.keys(obj);
+            } else {
+                // 未选择小节时，按选中的单元执行
+                params.lessonIds = Array.from(selectedlessons);
             }
 
             // 类型特定验证
@@ -769,6 +853,7 @@
                 const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
                 headerAll.checked = cbs.length > 0 && cbs.every(x => x.checked);
             }
+            updateSelectionSummary();
         });
         // 表头“全选”处理
         document.body.addEventListener('click', function (e) {
@@ -784,6 +869,7 @@
                 if (headerAll.checked) set.add(secId); else set.delete(secId);
             });
             selectedSections.set(unitId, set);
+            updateSelectionSummary();
         });
         document.getElementById('course-list').addEventListener('click', function (e) {
             const btn = e.target.closest('.course-select-btn');
