@@ -793,6 +793,7 @@ class AwayFromKeyboardThread(threading.Thread):
             else:
                 session_time = total_time = "0"
 
+            # 选择目标学习时长（单位：秒）
             learn_time = (
                 random.randint(*map(int, self.duration.split("-")))
                 if "-" in self.duration
@@ -826,8 +827,8 @@ class AwayFromKeyboardThread(threading.Thread):
                             "uid": _global.uid,
                             "cid": _global.cid,
                             "scoid": scoid,
-                            "session_time": str(int(session_time) + current_time),
-                            "total_time": str(int(total_time) + current_time),
+                            "session_time": str(int(session_time)),
+                            "total_time": str(int(total_time)),
                         },
                         headers={
                             "Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"
@@ -866,10 +867,14 @@ class AwayFromKeyboardThread(threading.Thread):
         """线程主函数"""
         try:
             state.task_status = "away_from_keyboard"
-            total_lessons = 0
+
+            # 预加载所有选择单元的小节以计算总任务数，并保持与文档描述一致
+            units_sections: List[List[Dict[str, Any]]] = []
+            total_sections = 0
 
             for lesson_id in self.lessonIds:
                 unit_index = _global.lessonIndex.index(lesson_id)
+                sections = []
                 while not state.stop_event.is_set():
                     try:
                         response = self._http_request_with_retry(
@@ -883,19 +888,21 @@ class AwayFromKeyboardThread(threading.Thread):
                         break
                     except Exception:
                         time.sleep(self.retry_delay)
-
                 if state.stop_event.is_set():
                     return
+                # 过滤未开放小节不计入总数
+                visible_sections = [s for s in sections if s.get("isvisible") != "false"]
+                units_sections.append(visible_sections)
+                total_sections += len(visible_sections)
 
-                total_lessons += len(sections)
-                state.progress["total"] = total_lessons
+            state.progress["total"] = total_sections
 
+            # 并发处理每个单元的小节
+            for sections in units_sections:
                 thread_pool = []
                 for section in sections:
                     if state.stop_event.is_set():
                         break
-                    if section["isvisible"] == "false":
-                        continue
                     while len(thread_pool) >= self.max_threads:
                         thread_pool = [t for t in thread_pool if t.is_alive()]
                         time.sleep(1)
