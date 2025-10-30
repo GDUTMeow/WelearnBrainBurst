@@ -28,6 +28,7 @@
         }
     </style>
     <link rel="stylesheet" href="/static/css/sober-theme.css">
+    <link rel="stylesheet" href="/static/css/toastify.css">
     <link rel="icon" href="/static/img/Nega_Nebulus_Logo.png">
 </head>
 
@@ -219,14 +220,10 @@
                                         <b>我同意：使用本项目造成的后果由使用者自行承担，作者不承担任何责任</b>
                                     </s-checkbox>
                                     <br>
-                                    <s-snackbar style="margin-right: 24px; margin-top: 24px;" id="start-brain-burst-tooltip">
-                                        <s-button id="start-brain-burst" slot="trigger">开始刷课！</s-button>
-                                    </s-snackbar>
-                                    <s-snackbar style="margin-top: 24px;" id="start-away-from-keyboard-tooltip">
-                                        <s-button id="start-away-from-keyboard" slot="trigger">
-                                            开始挂机！
-                                        </s-button>
-                                    </s-snackbar>
+                                    <s-button id="start-brain-burst" slot="trigger">开始刷课！</s-button>
+                                    <s-button id="start-away-from-keyboard" slot="trigger">
+                                        开始挂机！
+                                    </s-button>
                                 </div>
                             </div>
                         </div>
@@ -236,7 +233,8 @@
         </s-drawer>
     </s-page>
 
-    <script src="https://unpkg.com/sober@1.1.0/dist/sober.min.js"></script>
+    <script src="/static/js/sober.min.js"></script>
+    <script src="/static/js/toastify.js"></script>
     <script>
         let autoRefreshInterval = null;
     let selectedlessons = new Set(); // 存储选中的单元ID
@@ -244,6 +242,46 @@
     const sectionsByUnit = new Map(); // Map<unitId, Map<sectionId, {id,name}>>
     const unitMeta = new Map(); // Map<unitId, {unitname,name,visible}>
         let shutdownFlag = false;
+
+        // 兜底：如果 showToast 未注入，则提供一个简单的控制台回退
+        window.showToast = window.showToast || function (message, type = 'info') {
+            try {
+                Toastify({
+                    text: message,
+                    duration: 3000,
+                    close: true,
+                    gravity: 'bottom',
+                    position: 'right',
+                    style: {
+                        background: type === 'error'
+                            ? 'linear-gradient(to right, #fb7185, #ef4444)'
+                            : (type === 'success'
+                                ? 'linear-gradient(to right, #34d399, #22d3ee)'
+                                : 'linear-gradient(to right, #6366f1, #3b82f6)'),
+                        borderRadius: '16px',
+                    },
+                    stopOnFocus: true,
+                }).showToast();
+            } catch (e) {
+                console.log(`[${type}] ${message}`);
+            }
+        }
+
+        function clearAllUnitSelections() {
+            selectedlessons.clear();
+            document.querySelectorAll('#lesson-list s-checkbox').forEach(cb => {
+                cb.checked = false;
+            });
+        }
+
+        function clearAllSectionSelections() {
+            selectedSections.clear();
+            document.querySelectorAll('#section-list .section-checkbox').forEach(cb => {
+                cb.checked = false;
+            });
+            const headerAll = document.getElementById('section-select-all');
+            if (headerAll) headerAll.checked = false;
+        }
 
         function updateSelectionSummary() {
             const summary = document.getElementById('selection-summary');
@@ -303,6 +341,13 @@
         function addlesson(lessonId) {
             const checkbox = document.querySelector(`s-checkbox[onchange*="${lessonId}"]`);
             if (checkbox.checked) {
+                // 若此前已选择了小节，则切换为“按单元”模式，清空小节选择
+                let hasSections = false;
+                selectedSections.forEach(set => { if (set.size > 0) hasSections = true; });
+                if (hasSections) {
+                    clearAllSectionSelections();
+                    showToast('已切换为「单元」模式：已清除已选小节');
+                }
                 selectedlessons.add(lessonId);
             } else {
                 selectedlessons.delete(lessonId);
@@ -477,11 +522,21 @@
             localStorage.setItem('cookie', cookie);
             localStorage.setItem('lastModified', new Date().toLocaleString());
             document.getElementById('lastModified').textContent = `上次保存：${localStorage.getItem('lastModified')}`;
-            await fetch('/api/login', {
+            const loginRes = await fetch('/api/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ cookies: cookie })
             });
+            try {
+                const data = await loginRes.json();
+                if (data && data.success) {
+                    showToast('登录成功', 'success');
+                    // 标记本次为手动登录，避免触发自动登录提示
+                    sessionStorage.setItem('manualLoginJustNow', '1');
+                } else {
+                    showToast(`登录失败：${data && data.error ? data.error : '未知错误'}`, 'error');
+                }
+            } catch (e) { /* ignore */ }
             document.getElementById('loading').style.display = 'none';
             if (checkLogon()) {
                 loadCourses();
@@ -535,6 +590,18 @@
                         `欢迎回来，${userData.name} (${userData.student_id})！`;
                     document.getElementById('onlineStatus').textContent =
                         '在线状态：🟢 已登录';
+                    // 页面加载后的自动登录成功提示（仅提示一次），手动登录不提示
+                    const manual = sessionStorage.getItem('manualLoginJustNow');
+                    if (!manual) {
+                        const autoLoginToasted = sessionStorage.getItem('autoLoginToasted');
+                        if (!autoLoginToasted) {
+                            showToast('自动登录成功', 'success');
+                            sessionStorage.setItem('autoLoginToasted', '1');
+                        }
+                    } else {
+                        // 清理手动登录标记，避免下次误判
+                        sessionStorage.removeItem('manualLoginJustNow');
+                    }
                     return true;
                 } else {
                     document.getElementById('dashboard').style.display = 'none';
@@ -587,7 +654,7 @@
             try {
                 const res = await fetch(`/api/getSections?unitId=${unitId}`);
                 const data = await res.json();
-                if (!data.success) throw new Error(data.error || '获取小节失败');
+                if (!data.success) { showToast(`获取小节失败：${data.error || ''}`, 'error'); throw new Error(data.error || '获取小节失败'); }
                 const tbody = document.getElementById('section-list');
                 // 如果展开了不同的单元，则清空之前已选择的小节
                 const prevUnitId = tbody.dataset.unitId;
@@ -636,18 +703,7 @@
             // 验证必填项
             if (!document.getElementById('freeToUse').checked ||
                 !document.getElementById('disclaimer').checked) {
-                if (taskType === 'brain_burst') {
-                    brainBurst.innerHTML = `请先同意使用协议和免责声明！
-<s-button id="start-brain-burst" slot="trigger">
-    开始刷课！
-</s-button>`
-                }
-                if (taskType === 'away_from_keyboard') {
-                    awayFromKeyboard.innerHTML = `请先同意使用协议和免责声明！
-<s-button id="start-away-from-keyboard" slot="trigger">
-    开始挂机！
-</s-button>`
-                }
+                showToast('请先同意使用协议和免责声明！', 'error');
                 return;
             }
 
@@ -655,18 +711,7 @@
             let hasSections = false;
             selectedSections.forEach((set) => { if (set.size > 0) hasSections = true; });
             if (selectedlessons.size === 0 && !hasSections) {
-                if (taskType === 'brain_burst') {
-                    brainBurst.innerHTML = `请至少选择一个单元！
-<s-button id="start-brain-burst" slot="trigger">
-    开始刷课！
-</s-button>`
-                }
-                if (taskType === 'away_from_keyboard') {
-                    awayFromKeyboard.innerHTML = `请至少选择一个单元！
-<s-button id="start-away-from-keyboard" slot="trigger">
-    开始挂机！
-</s-button>`
-                }
+                showToast('请至少选择一个单元或小节！', 'error');
                 return;
             }
 
@@ -694,18 +739,14 @@
             if (taskType === 'brain_burst') {
                 const rate = document.getElementById('correct-rate').value;
                 if (!validateRate(rate)) {
-                    brainBurst.innerHTML = `正确率格式错啦！
-<s-button id="start-brain-burst" slot="trigger">
-    开始刷课！
-</s-button>`
+                    showToast('正确率格式错啦！', 'error');
                     return;
                 }
                 params.rate = rate;
                 const offset = document.getElementById('section-offset').value.trim();
                 if (offset) {
                     if (!validateTime(offset)) {
-                        brainBurst.innerHTML = `小节错开时间格式错啦！
-<s-button id="start-brain-burst" slot="trigger">开始刷课！</s-button>`
+                        showToast('小节错开时间格式错啦！', 'error');
                         return;
                     }
                     params.offset = offset;
@@ -713,10 +754,7 @@
             } else {
                 const time = document.getElementById('idle-time').value;
                 if (!validateTime(time)) {
-                    awayFromKeyboard.innerHTML = `时间格式错啦！
-<s-button id="start-away-from-keyboard" slot="trigger">
-    开始挂机！
-</s-button>`
+                    showToast('时间格式错啦！', 'error');
                     return;
                 }
                 params.time = time;
@@ -736,33 +774,11 @@
                     throw new Error('请求失败');
                 }
                 else {
-                    if (taskType === 'brain_burst') {
-                        brainBurst.innerHTML = `任务已启动！
-<s-button id="start-brain-burst" slot="trigger">
-    开始刷课！
-</s-button>`
-                    }
-                    if (taskType === 'away_from_keyboard') {
-                        awayFromKeyboard.innerHTML = `任务已启动！
-<s-button id="start-away-from-keyboard" slot="trigger">
-    开始挂机！
-</s-button>`
-                    }
+                    showToast('任务已启动！', 'success');
                 }
             } catch (error) {
                 console.warn('任务启动失败:', error);
-                if (taskType === 'brain_burst') {
-                    brainBurst.innerHTML = `任务启动失败，请重试或查看控制台！
-<s-button id="start-brain-burst" slot="trigger">
-    开始刷课！
-</s-button>`
-                }
-                if (taskType === 'away_from_keyboard') {
-                    awayFromKeyboard.innerHTML = `任务启动失败，请重试或查看控制台！
-<s-button id="start-away-from-keyboard" slot="trigger">
-    开始挂机！
-</s-button>`
-                }
+                showToast('任务启动失败，请重试或查看控制台！', 'error');
                 document.getElementById('loading').style.display = 'none';
                 return;
             } finally {
@@ -844,6 +860,11 @@
             if (!cb) return;
             const unitId = cb.dataset.unitId;
             const secId = cb.dataset.secId;
+            // 若此前已选择了单元，而当前勾选小节 -> 切换为“按小节”模式，清空单元选择
+            if (cb.checked && selectedlessons.size > 0) {
+                clearAllUnitSelections();
+                showToast('已切换为「小节」模式：已清除已选单元');
+            }
             const set = selectedSections.get(unitId) || new Set();
             if (cb.checked) set.add(secId); else set.delete(secId);
             selectedSections.set(unitId, set);
@@ -863,6 +884,11 @@
             const unitId = tbody.dataset.unitId;
             const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
             const set = new Set(selectedSections.get(unitId) || []);
+            // 若此前已选择了单元，而当前执行小节“全选” -> 切换为“按小节”模式
+            if (headerAll.checked && selectedlessons.size > 0) {
+                clearAllUnitSelections();
+                showToast('已切换为「小节」模式：已清除已选单元');
+            }
             cbs.forEach(cb => {
                 cb.checked = headerAll.checked;
                 const secId = cb.dataset.secId;
