@@ -34,6 +34,8 @@ from flask import (
 from io import StringIO
 from werkzeug.wrappers.response import Response as WerkzeugResponse
 from bs4 import BeautifulSoup
+import tls_client
+import base64
 
 
 # ====================== 全局变量 ======================
@@ -243,32 +245,19 @@ def get_port():
 
 def get_user_info(client: httpx.Client) -> Dict[str, Optional[str]]:
     """
-    从用户信息页面提取用户详细信息
-    :param client: 已认证的httpx客户端
-    :return: 包含用户信息的字典，格式为:
-        {
-            "username": "用户名",
-            "name": "姓名",
-            "student_id": "学号",
-            "school": "学校",
-            "birth_year": "出生年份"
-        }
+    从用户信息页面提取用户详细信息（使用 tls_client 绕过 WAF）
+    :param client: 保留参数以兼容，但内部使用 tls_client
+    :return: 用户信息字典
     """
     info_url = "https://welearn.sflep.com/user/userinfo.aspx"
 
     try:
-        # 发送GET请求获取用户信息页面
-        response = client.get(info_url)
-        response.raise_for_status()
-
-        # 使用BeautifulSoup解析HTML
+        session = build_tls_session()
+        response = session.get(info_url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"})
         soup = BeautifulSoup(response.text, "html.parser")
         user_div = soup.find("div", id="user1")
-
         if not user_div:
             raise ValueError("未找到用户信息面板")
-
-        # 使用CSS选择器精确查找各字段
         return {
             "username": _find_input_value(user_div, "lblAccount"),
             "name": _find_input_value(user_div, "txtName"),
@@ -276,16 +265,9 @@ def get_user_info(client: httpx.Client) -> Dict[str, Optional[str]]:
             "school": _find_selected_school(user_div),
             "birth_year": _find_selected_birthyear(user_div),
         }
-
-    except httpx.HTTPStatusError as e:
-        print(f"请求失败，状态码: {e.response.status_code}")
     except Exception as e:
         print(f"获取用户信息出错: {str(e)}")
-
-    # 发生错误时返回空值字典
-    return {
-        key: None for key in ["username", "name", "student_id", "school", "birth_year"]
-    }
+        return {key: None for key in ["username", "name", "student_id", "school", "birth_year"]}
 
 
 def _find_input_value(soup: BeautifulSoup, id_fragment: str) -> Optional[str]:
@@ -317,6 +299,54 @@ def _find_selected_birthyear(soup: BeautifulSoup) -> Optional[str]:
 
     selected = select_tag.find("option", selected=True)
     return selected.get("value") if selected else None
+
+
+# WAF 绕过部分
+def to_hex_byte_array(byte_array: bytes) -> str:
+    return ''.join([f'{byte:02x}' for byte in byte_array])
+
+
+def generate_cipher_text(password: str):
+    # 获取当前时间戳
+    T0 = int(round(time.time() * 1000))
+    P = password.encode('utf-8')
+    V = (T0 >> 16) & 0xFF
+    for byte in P:
+        V ^= byte
+    remainder = V % 100
+    T1 = int((T0 / 100) * 100 + remainder)
+    P1 = to_hex_byte_array(P)
+    S = f"{T1}*" + P1
+    S_encoded = S.encode('utf-8')
+    E = base64.b64encode(S_encoded).decode('utf-8')
+    return [E, T1]
+
+
+def build_tls_session() -> tls_client.Session:
+    """构建一个带浏览器指纹的 tls_client 会话，并注入当前 Cookie。"""
+    session = tls_client.Session(client_identifier="chrome_120", random_tls_extension_order=True)
+    session.headers.update({
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'cache-control': 'no-cache',
+        'upgrade-insecure-requests': '1',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'sec-ch-ua': '"Chromium";v="120", "Not?A_Brand";v="8", "Google Chrome";v="120"',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-ch-ua-mobile': '?0',
+    })
+    try:
+        if state.cookies:
+            for k, v in state.cookies.items():
+                for domain in ("welearn.sflep.com", ".sflep.com", "sso.sflep.com"):
+                    try:
+                        session.cookies.set(k, v, domain=domain)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return session
+
 
 
 # ====================== 路由定义 ======================
@@ -377,6 +407,96 @@ def api_login(cookies: str = None):
         return jsonify(success=False, error=str(e))
 
 
+@app.route("/api/login_pw", methods=["POST"])
+def api_login_pw():
+    """使用用户名/密码登录"""
+    state.reset()
+    try:
+        data = request.json or {}
+        user = data.get("user")
+        pwd = data.get("pwd")
+        if not user or not pwd:
+            return jsonify(success=False, error="缺少用户名或密码")
+
+        log_message(f"尝试用户名/密码登录: {user}")
+        session = tls_client.Session(client_identifier="chrome_120", debug=False)
+
+        resp = session.get(
+            "https://welearn.sflep.com/user/prelogin.aspx?loginret=http://welearn.sflep.com/user/loginredirect.aspx"
+        )
+        rurl = resp.headers.get("Location") or resp.text
+
+        try:
+            code_challenge = rurl.split("&")[4].split("=")[1]
+            state_param = rurl.split("&")[6].split("=")[1]
+        except Exception:
+            m1 = re.search(r"code_challenge=([^&]+)", rurl)
+            m2 = re.search(r"state=([^&]+)", rurl)
+            code_challenge = m1.group(1) if m1 else ""
+            state_param = m2.group(1) if m2 else ""
+
+        rturl = (
+            f"/connect/authorize/callback?client_id=welearn_web&redirect_uri=https%3A%2F%2Fwelearn.sflep.com%2Fsignin-sflep&response_type=code&scope=openid%20profile%20email%20phone%20address&code_challenge={code_challenge}&code_challenge_method=S256&state={state_param}&x-client-SKU=ID_NET472&x-client-ver=6.32.1.0"
+        )
+
+        while True:
+            enpwd = generate_cipher_text(pwd)
+            form_data = {
+                "rturl": rturl,
+                "account": user,
+                "pwd": str(enpwd[0]),
+                "ts": str(enpwd[1]),
+            }
+
+            response = session.post("https://sso.sflep.com/idsvr/account/login", data=form_data)
+            try:
+                rt_json = response.json()
+            except Exception:
+                return jsonify(success=False, error="登录返回解析失败")
+
+            code = rt_json.get("code", -1)
+            if code == -1:
+                continue
+            if code == 1:
+                return jsonify(success=False, error="帐号或密码错误")
+
+            next_url = f"https://sso.sflep.com/idsvr" + rt_json.get("data", "")
+
+            while True:
+                resp2 = session.get(next_url)
+                if resp2.status_code in (301, 302, 303, 307, 308):
+                    next_url = resp2.headers.get("Location")
+                    if not next_url:
+                        break
+                else:
+                    break
+
+            if code == 0:
+                try:
+                    cookie_dict = {}
+                    try:
+                        cookie_dict = session.cookies.get_dict()
+                    except Exception:
+                        for c in getattr(session.cookies, 'jar', []):
+                            cookie_dict[c.name] = c.value
+
+                    client.cookies.update(cookie_dict)
+                    state.cookies = cookie_dict
+                    with open("config.json", "w") as f:
+                        json.dump({"cookies": ";".join([f"{k}={v}" for k, v in cookie_dict.items()])}, f)
+
+                    userinfo = get_user_info(client)
+                    log_message(f"登录成功: {userinfo}")
+                    state.task_status = "idle"
+                    return jsonify(success=True, error="", msg=f"登陆成功：欢迎，{userinfo.get('name')}")
+                except Exception as e:
+                    return jsonify(success=False, error=str(e))
+
+    except Exception as e:
+        log_message(f"密码登录异常: {e}", "APPERR")
+        return jsonify(success=False, error=str(e))
+
+
 @app.route("/api/getCourses", methods=["GET"])
 def get_courses():
     """获取课程列表"""
@@ -386,8 +506,10 @@ def get_courses():
 
     try:
         url = f"https://welearn.sflep.com/ajax/authCourse.aspx?action=gmc&nocache={round(random.random(), 16)}"
-        response = client.get(
-            url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"}
+        session = build_tls_session()
+        response = session.get(
+            url,
+            headers={"Referer": "https://welearn.sflep.com/student/index.aspx"},
         )
         log_message(f"获取课程列表: {response.text}", "APPDEBUG")
         courses: List[CourseInfo] = response.json()["clist"]
@@ -405,8 +527,9 @@ def get_lessons():
 
     try:
         _global.cid = request.args.get("cid")
+        session = build_tls_session()
         url = f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}"
-        response = client.get(
+        response = session.get(
             url,
             headers={"Referer": "https://welearn.sflep.com/student/course_info.aspx"},
         )
@@ -418,7 +541,7 @@ def get_lessons():
             "APPDEBUG",
         )
         url = "https://welearn.sflep.com/ajax/StudyStat.aspx"
-        response = client.get(
+        response = session.get(
             url,
             params={"action": "courseunits", "cid": _global.cid, "uid": _global.uid},
             headers={"Referer": "https://welearn.sflep.com/student/course_info.aspx"},
@@ -453,7 +576,8 @@ def get_sections():
         url = (
             f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={_global.cid}&uid={_global.uid}&unitidx={unit_index}&classid={_global.classid}"
         )
-        response = client.get(
+        session = build_tls_session()
+        response = session.get(
             url,
             headers={
                 "Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}"
@@ -556,10 +680,43 @@ def exit():
 def validate_cookies(cookies: Dict[str, str]) -> bool:
     """验证Cookie有效性"""
     try:
+        session = tls_client.Session(client_identifier="chrome_120", random_tls_extension_order=True)
+        # 常见浏览器请求头
+        session.headers.update({
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'cache-control': 'no-cache',
+            'upgrade-insecure-requests': '1',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'sec-ch-ua': '"Chromium";v="120", "Not?A_Brand";v="8", "Google Chrome";v="120"',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-ch-ua-mobile': '?0',
+        })
+        # 注入用户提供的 Cookie
+        for k, v in cookies.items():
+            try:
+                session.cookies.set(k, v, domain="welearn.sflep.com")
+                session.cookies.set(k, v, domain=".sflep.com")
+                session.cookies.set(k, v, domain="sso.sflep.com")
+            except Exception:
+                pass
+
         test_url = "https://welearn.sflep.com/user/userinfo.aspx"
-        resp = client.get(test_url, cookies=cookies)
-        log_message(f"Cookie验证返回：{resp.text}", "APPDEBUG")
-        return "我的资料" in resp.text
+        resp = session.get(test_url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"})
+        log_message(f"Cookie验证返回（tls_client）：{resp.text}", "APPDEBUG")
+        text = resp.text
+        if ("我的资料" in text) or ("id=\"user1\"" in text):
+            return True
+
+        # 若命中阿里云 WAF 405 页面，尝试预热并重试
+        if ("<title>405</title>" in text) or ("Your Request ID is" in text):
+            _ = session.get("https://welearn.sflep.com/user/prelogin.aspx?loginret=https://welearn.sflep.com/user/loginredirect.aspx")
+            resp2 = session.get(test_url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"})
+            text2 = resp2.text
+            log_message(f"Cookie验证重试返回（tls_client）：{text2}", "APPDEBUG")
+            return ("我的资料" in text2) or ("id=\"user1\"" in text2)
+
+        return False
     except Exception as e:
         log_message(f"Cookie验证失败: {str(e)}")
         return False
@@ -585,17 +742,17 @@ class BrainBurstThread(threading.Thread):
     def run(self):
         try:
             state.task_status = "brain_burst"
+            session = build_tls_session()
             infoHeaders = {
                 "Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}",
             }
             # 重新计算总数
             state.progress = {"current": 0, "total": 0}
             for lesson in self.lessonIds:  # 获取课程详细列表
-                response = client.get(
+                response = session.get(
                     f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={_global.cid}&uid={_global.uid}&unitidx={_global.lessonIndex.index(lesson)}&classid={_global.classid}",
                     headers=infoHeaders,
                 )
-                resp = response
                 if "异常" in response.text or "出错了" in response.text:
                     state.task_status = "error"
                     log_message(
@@ -629,7 +786,7 @@ class BrainBurstThread(threading.Thread):
                         )
                         id = section["id"]
                         # 第一种刷课方法
-                        client.post(
+                        session.post(
                             "https://welearn.sflep.com/Ajax/SCO.aspx",
                             data={
                                 "action": "startsco160928",
@@ -641,7 +798,7 @@ class BrainBurstThread(threading.Thread):
                                 "Referer": f"https://welearn.sflep.com/Student/StudyCourse.aspx?cid={_global.cid}&classid={_global.classid}&sco={id}"
                             },
                         )
-                        response = client.post(
+                        response = session.post(
                             "https://welearn.sflep.com/Ajax/SCO.aspx",
                             data={
                                 "action": "setscoinfo",
@@ -674,7 +831,7 @@ class BrainBurstThread(threading.Thread):
                                     pass
                             continue
                         else:  # 第二种刷课法
-                            response = client.post(
+                            response = session.post(
                                 "https://welearn.sflep.com/Ajax/SCO.aspx",
                                 data={
                                     "action": "savescoinfo160928",
@@ -736,10 +893,12 @@ class AwayFromKeyboardThread(threading.Thread):
         """带有重试机制的 HTTP 请求"""
         for attempt in range(self.max_retries):
             try:
-                response = client.request(method, url, **kwargs)
-                response.raise_for_status()
+                if method.upper() == "GET":
+                    response = self.session.get(url, **kwargs)
+                else:
+                    response = self.session.post(url, **kwargs)
                 return response
-            except (httpx.TimeoutException, httpx.HTTPError, Exception) as e:
+            except Exception as e:
                 if attempt < self.max_retries - 1:
                     log_message(
                         f"请求 {url} 失败 ({str(e)})，{self.retry_delay} 秒后重试...",
@@ -869,6 +1028,7 @@ class AwayFromKeyboardThread(threading.Thread):
         """线程主函数"""
         try:
             state.task_status = "away_from_keyboard"
+            self.session = build_tls_session()
 
             # 预加载所有选择单元的小节以计算总任务数，并保持与文档描述一致
             units_sections: List[List[Dict[str, Any]]] = []

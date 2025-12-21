@@ -26,6 +26,10 @@
             background: var(--md-sys-color-surface-container);
             border-radius: 12px;
         }
+
+        s-textfield {
+            width: 100% !important;
+        }
     </style>
     <link rel="stylesheet" href="/static/css/sober-theme.css">
     <link rel="stylesheet" href="/static/css/toastify.css">
@@ -109,12 +113,19 @@
                         <div slot="headline">账号管理</div>
                         <div slot="text">
                             <p>使用方法：<a href="https://gamernotitle.sg.larksuite.com/wiki/PLLywJxlViN31tkBiIflSaytgBg">https://gamernotitle.sg.larksuite.com/wiki/PLLywJxlViN31tkBiIflSaytgBg</a> 或 <a href="https://scriptkid.notion.site/welearnbrainburst">https://scriptkid.notion.site/welearnbrainburst</a></p>
-                            <s-text-field style="display: grid; width: auto; margin-bottom: 24px; margin-top: 24px;"
+                            <div align="right" style="margin-top: 8px; margin-bottom: 8px;">
+                                Cookie 登录 <s-switch id="login-mode-switch"></s-switch> 账号密码登录
+                            </div>
+                            <s-text-field style="display: grid; width: 100%; margin-bottom: 24px; margin-top: 24px;"
                                 label="Cookie" name="cookie-input" id="cookie-input"></s-text-field>
+
+                            <!-- 账号登录输入 -->
+                            <s-text-field style="display: none; width: 100%; margin-bottom: 12px;" label="用户名" id="username-input"></s-text-field>
+                            <s-text-field style="display: none; width: 100%; margin-bottom: 24px;" label="密码" id="password-input" type="password"></s-text-field>
                             <div align="right">
                                 <p id="lastModified">上次保存：未知</p>
                                 <p id="onlineStatus">在线状态</p>
-                                <s-button id="save-cookie-btn">保存 Cookie 并登录</s-button>
+                                <s-button id="save-cookie-btn">登录</s-button>
                             </div>
                             <div align="right" style="margin-top: 8px;">
                                 <s-button id="reset-btn" style="margin-right: 8px;">重置程序状态</s-button>
@@ -534,33 +545,67 @@
             }
             document.getElementById('loading').style.display = 'none';
         }
-        // Cookie操作
+        // 登录
         async function saveCookie() {
-            const cookie = document.getElementById('cookie-input').value;
+            const useAccount = document.getElementById('login-mode-switch').checked;
             document.getElementById('loading').style.display = 'block';
-            localStorage.setItem('cookie', cookie);
-            localStorage.setItem('lastModified', new Date().toLocaleString());
-            document.getElementById('lastModified').textContent = `上次保存：${localStorage.getItem('lastModified')}`;
-            const loginRes = await fetch('/api/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cookies: cookie })
-            });
-            try {
-                const data = await loginRes.json();
-                if (data && data.success) {
-                    showToast('登录成功', 'success');
-                    // 标记本次为手动登录，避免触发自动登录提示
-                    sessionStorage.setItem('manualLoginJustNow', '1');
-                } else {
-                    showToast(`登录失败：${data && data.error ? data.error : '未知错误'}`, 'error');
+
+            if (useAccount) {
+                const user = document.getElementById('username-input').value;
+                const pwd = document.getElementById('password-input').value;
+                if (!user || !pwd) {
+                    showToast('请输入用户名和密码', 'error');
+                    document.getElementById('loading').style.display = 'none';
+                    return;
                 }
-            } catch (e) { /* ignore */ }
+                try {
+                    const res = await fetch('/api/login_pw', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user: user, pwd: pwd })
+                    });
+                    const data = await res.json();
+                    if (data && data.success) {
+                        showToast('登录成功', 'success');
+                        sessionStorage.setItem('manualLoginJustNow', '1');
+                    } else {
+                        showToast(`登录失败：${data && data.error ? data.error : '未知错误'}`, 'error');
+                    }
+                } catch (e) {
+                    showToast('登录请求失败', 'error');
+                }
+            } else {
+                const cookie = document.getElementById('cookie-input').value;
+                if (!cookie) {
+                    showToast('请粘贴 Cookie', 'error');
+                    document.getElementById('loading').style.display = 'none';
+                    return;
+                }
+                localStorage.setItem('cookie', cookie);
+                localStorage.setItem('lastModified', new Date().toLocaleString());
+                document.getElementById('lastModified').textContent = `上次保存：${localStorage.getItem('lastModified')}`;
+                try {
+                    const loginRes = await fetch('/api/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cookies: cookie })
+                    });
+                    const data = await loginRes.json();
+                    if (data && data.success) {
+                        showToast('登录成功', 'success');
+                        sessionStorage.setItem('manualLoginJustNow', '1');
+                    } else {
+                        showToast(`登录失败：${data && data.error ? data.error : '未知错误'}`, 'error');
+                    }
+                } catch (e) {
+                    showToast('登录请求失败', 'error');
+                }
+            }
+
             document.getElementById('loading').style.display = 'none';
             if (checkLogon()) {
                 loadCourses();
             }
-
         }
 
         function displayCookieAndLastModified() {
@@ -847,6 +892,27 @@
         // 初始化
         document.addEventListener('DOMContentLoaded', () => {
             displayCookieAndLastModified();
+            // 绑定登录模式切换行为
+            const modeSwitch = document.getElementById('login-mode-switch');
+            const userField = document.getElementById('username-input');
+            const pwdField = document.getElementById('password-input');
+            const cookieField = document.getElementById('cookie-input');
+            function refreshLoginMode() {
+                if (modeSwitch.checked) {
+                    // 账号登录
+                    userField.style.display = '';
+                    pwdField.style.display = '';
+                    cookieField.style.display = 'none';
+                    document.getElementById('save-cookie-btn').textContent = '使用账号登录';
+                } else {
+                    userField.style.display = 'none';
+                    pwdField.style.display = 'none';
+                    cookieField.style.display = '';
+                    document.getElementById('save-cookie-btn').textContent = '登录';
+                }
+            }
+            modeSwitch.addEventListener('change', refreshLoginMode);
+            refreshLoginMode();
             const currentYear = new Date().getFullYear();
             const baseYear = 2024;
             const yearSpan = document.getElementById('copyrightYear');

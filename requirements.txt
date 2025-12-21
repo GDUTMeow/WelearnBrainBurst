@@ -1,3 +1,4 @@
 flask
 bs4
 httpx
+tls-client
