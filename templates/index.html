@@ -30,6 +30,29 @@
         s-textfield {
             width: 100% !important;
         }
+        .mode2-submit { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin: 16px 0; }
+        .mode2-content { display: grid; gap: 24px; margin: 24px 0; }
+        .mode2-heading { margin: 0; font-size: 1rem; font-weight: 600; color: var(--s-color-on-surface); }
+        .mode2-section-heading { display: flex; align-items: center; justify-content: flex-end; gap: 16px; }
+        .mode2-switch-row { display: flex; align-items: center; gap: 16px; }
+        .mode2-switch-row { margin: 0; }
+        .mode2-switch-row s-switch { flex-shrink: 0; }
+        .mode2-supporting { display: block; margin: 6px 0 0; font-size: .875rem; line-height: 1.6; color: var(--s-color-on-surface-variant); }
+        .mode2-content s-text-field { display: grid; width: auto; }
+        .mode2-agreements { display: grid; justify-items: end; gap: 4px; }
+        .mode2-agreements s-checkbox { height: auto; min-height: 40px; line-height: 1.6; }
+        .mode2-install-actions { display: grid; gap: 12px; }
+        .mode2-button-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+        #mode2-env-status:not(:empty) { margin-top: 24px; }
+        .mode2-environment-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; padding: 12px 0; }
+        .mode2-environment-row + .mode2-environment-row { border-top: 1px solid var(--s-color-outline-variant); }
+        .mode2-environment-row .mode2-supporting { overflow-wrap: anywhere; }
+        .mode2-environment-row s-chip { pointer-events: none; }
+        @media (max-width: 600px) {
+            main { margin: 16px !important; max-width: none !important; }
+            .mode2-content { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+            .mode2-agreements { justify-items: start; }
+        }
     </style>
     <link rel="stylesheet" href="/static/css/sober-theme.css">
     <link rel="stylesheet" href="/static/css/toastify.css">
@@ -109,7 +132,7 @@
                     padding: 24px;
                     width: 100%;
                     max-width: 100%;
-                    margin-top: 24px;">
+                    margin-top: 24px;" id="account-card">
                         <div slot="headline">账号管理</div>
                         <div slot="text">
                             <p>使用方法：<a href="https://gamernotitle.sg.larksuite.com/wiki/PLLywJxlViN31tkBiIflSaytgBg">https://gamernotitle.sg.larksuite.com/wiki/PLLywJxlViN31tkBiIflSaytgBg</a> 或 <a href="https://scriptkid.notion.site/welearnbrainburst">https://scriptkid.notion.site/welearnbrainburst</a></p>
@@ -187,6 +210,10 @@
                                 </s-table>
                                 <div id="section-list-container" style="display:none; margin-top:16px;">
                                     <s-divider> 小节列表 <span id="section-list-title"></span> </s-divider>
+                                    <div style="display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 16px;">
+                                        <span>显示所有课程</span>
+                                        <s-switch id="show-all-sections" aria-label="显示所有课程"></s-switch>
+                                    </div>
                                     <s-table style="max-width: 100%; width: 100%; margin-top: 16px; margin-bottom: 24px; text-align: center;">
                                         <s-thead>
                                             <s-tr>
@@ -194,8 +221,7 @@
                                                 <s-th>名称</s-th>
                                                 <s-th>状态</s-th>
                                                 <s-th>
-                                                    选择
-                                                    <s-checkbox id="section-select-all">全选</s-checkbox>
+                                                    <s-checkbox id="section-select-all">选择</s-checkbox>
                                                 </s-th>
                                             </s-tr>
                                         </s-thead>
@@ -203,7 +229,8 @@
                                     </s-table>
                                 </div>
                             </div>
-                            <div id='params-setup' style="display: none;">
+                            <div id='params-setup' data-course-loaded="0" style="display: none;">
+                                <div id="mode1-settings">
                                 <s-divider> 课程参数设置 </s-divider>
                                 <s-text-field style="display: grid; width: auto; margin-top: 24px; margin-bottom: 12px;"
                                     label="正确率" id="correct-rate"></s-text-field>
@@ -211,17 +238,55 @@
                                     label="小节错开" id="section-offset"></s-text-field>
                                 <s-text-field style="display: grid; width: auto; margin-top: 24px; margin-bottom: 24px;"
                                     label="挂机时间" id="idle-time"></s-text-field>
-                                <div align="center">
+                                <div id="course-parameter-help" style="text-align: left;">
                                     <p>正确率表示单元的每一节的正确率应该为多少，可以是确切的数值也可以是范围，例如 98 表示 98% 正确率，98-100 表示 98%-100% 正确率之间随机
                                     </p>
                                     <p>小节错开指每个小节之间应该错开多久完成，可以填固定值也可以填范围，例如 20 表示每一小节都错开 20 秒，20-60 表示每一小节之间错开 20 秒到 60 秒间的一个随机值</p>
                                     <p>挂机时间表示单元的每一节要挂机多久，可以是确切的数值也可以是范围，例如 300 表示每一节都挂机 5 分钟，180-300 表示每一节挂机 180 秒到 300
                                         秒不等的时间</p>
                                 </div>
+                                </div>
                                 <div align="left">
                                     <s-alert id="selection-summary" style="margin-bottom: 12px; text-align: left; color: var(--md-sys-color-on-surface-variant); width: 100%;"></s-alert>
                                 </div>
-                                <div align="right" style="margin-top: 24px;">
+                                <div id="task-mode-selector" style="margin: 12px 0; text-align: right;">
+                                    模式 1 · 服务端刷课 <s-switch id="task-mode-switch" aria-label="本次任务模式"></s-switch> 模式 2 · 浏览器自动答题
+                                </div>
+                    <section id="mode2-panel" style="display: none;" aria-label="Selenium 自动答题设置">
+                        <div class="mode2-content">
+                            <section aria-labelledby="mode2-settings-title" class="mode2-settings">
+                                <s-divider id="mode2-settings-title">自动答题设置</s-divider>
+                                <s-text-field type="number" label="小节完成后的空闲等待（秒）" id="mode2-idle-timeout" value="15">
+                                    <span slot="text">5–300 秒，默认 15 秒。课程加载较慢时可适当调大。</span>
+                                </s-text-field>
+                            </section>
+                            <section aria-label="自动答题运行选项" class="mode2-environment">
+                                <div class="mode2-section-heading">
+                                    <div class="mode2-switch-row">
+                                        <span>无头模式</span>
+                                        <s-tooltip>
+                                            <s-switch slot="trigger" id="mode2-headless" checked="true" aria-label="无头模式"></s-switch>
+                                            开启后，将不会弹出浏览器窗口
+                                        </s-tooltip>
+                                    </div>
+                                </div>
+                                <div id="mode2-env-status" role="status" aria-live="polite"></div>
+                                <div id="mode2-install-actions" class="mode2-install-actions"></div>
+                            </section>
+                        </div>
+                            <div class="mode2-agreements">
+                                <s-checkbox id="mode2-freeToUse">我同意：本项目仅供学习交流使用，不得用于任何商业用途，否则后果自负</s-checkbox>
+                                <s-checkbox id="mode2-disclaimer">我同意：使用本项目造成的后果由使用者自行承担，作者不承担任何责任</s-checkbox>
+                            </div>
+                        <div class="mode2-submit">
+                             <s-tooltip>
+                                 <s-button slot="trigger" id="mode2-refresh-env" type="outlined">检测环境</s-button>
+                                 检测 Chromedriver 及其他所需组件安装情况
+                             </s-tooltip>
+                             <s-button id="start-selenium-auto" disabled="true">开始自动答题</s-button>
+                         </div>
+                        </section>
+                                <div id="mode1-actions" align="right" style="margin-top: 24px;">
                                     <br>
                                     <s-checkbox id="freeToUse">
                                         <b>我同意：本项目仅供学习交流使用，不得用于任何商业用途，否则后果自负</b>
@@ -242,12 +307,19 @@
                             </div>
                         </div>
                     </s-card>
+
+                    <s-dialog id="mode2-install-dialog">
+                        <div slot="headline">安装运行环境</div>
+                        <div slot="text" id="mode2-install-confirm-text"></div>
+                        <s-button slot="action" type="text">取消</s-button>
+                        <s-button slot="action" type="text" id="mode2-confirm-install">确认安装</s-button>
+                    </s-dialog>
                 </main>
             </s-scroll-view>
         </s-drawer>
     </s-page>
 
-    <script src="/static/js/sober.min.js"></script>
+    <script src="/static/js/sober.min.js?v=1.1.10"></script>
     <script src="/static/js/toastify.js"></script>
     <script>
         let autoRefreshInterval = null;
@@ -259,6 +331,162 @@
     let selectedCourseId = null;
     let selectedCourseName = '';
         let shutdownFlag = false;
+
+        // ============ 运行模式（模式 1 / 模式 2）============
+        const MODE1 = 'mode1';
+        const MODE2 = 'mode2';
+        let runMode = MODE1;
+
+        function applyRunMode() {
+            const isMode2 = runMode === MODE2;
+            const modeSwitch = document.getElementById('task-mode-switch');
+            if (modeSwitch) modeSwitch.checked = isMode2;
+            // 账号、课程、单元和小节选择始终可见；模式设置只出现在最终任务区。
+            document.getElementById('account-card').style.display = 'block';
+            document.getElementById('mode2-panel').style.display = isMode2 ? 'block' : 'none';
+            const mode1Settings = document.getElementById('mode1-settings');
+            if (mode1Settings) mode1Settings.style.display = isMode2 ? 'none' : 'block';
+            document.getElementById('mode1-actions').style.display = isMode2 ? 'none' : 'block';
+        }
+
+        async function loadRunMode() {
+            // 页面初始不选择/设置模式；用户完成课程选择后在任务区决定本次模式。
+            runMode = MODE1;
+            applyRunMode();
+        }
+
+        function switchRunMode(mode) {
+            runMode = mode === MODE2 ? MODE2 : MODE1;
+            applyRunMode();
+            showToast(
+                runMode === MODE2
+                    ? '已选择本次最终提交使用模式 2'
+                    : '已选择本次最终提交使用模式 1',
+                'success'
+            );
+        }
+
+        function renderMode2Environment(data) {
+            document.getElementById('start-selenium-auto').disabled =
+                !(data && data.success && data.ready && data.install?.status !== 'running');
+            const status = document.getElementById('mode2-env-status');
+            const actions = document.getElementById('mode2-install-actions');
+            status.replaceChildren();
+            actions.replaceChildren();
+            const notice = (text) => {
+                const alert = document.createElement('s-alert');
+                alert.textContent = text;
+                actions.appendChild(alert);
+            };
+            if (!data || !data.components) {
+                notice('环境检测失败，请重试或查看日志。');
+                return;
+            }
+            for (const item of data.components) {
+                const row = document.createElement('div');
+                row.className = 'mode2-environment-row';
+                const info = document.createElement('div');
+                const title = document.createElement('strong');
+                title.textContent = item.label + (item.version ? ` · ${item.version}` : '');
+                const detail = document.createElement('span');
+                detail.className = 'mode2-supporting';
+                detail.textContent = item.detail;
+                info.append(title, detail);
+                const chip = document.createElement('s-chip');
+                chip.textContent = item.ok ? '已就绪' : '待安装';
+                row.append(info, chip);
+                status.appendChild(row);
+            }
+            const installState = data.install || {};
+            if (installState.status === 'running') {
+                const progress = document.createElement('s-linear-progress');
+                progress.indeterminate = true;
+                actions.appendChild(progress);
+                notice(`正在安装 ${installState.component || '组件'}，请稍候……`);
+                setTimeout(() => loadMode2Environment(false), 2000);
+                return;
+            }
+            if (data.ready) return;
+            const missing = data.missing || [];
+            notice(`缺少 ${missing.join('、')}。安装前会请你确认，不会自动修改本机环境。`);
+            const buttons = document.createElement('div');
+            buttons.className = 'mode2-button-row';
+            for (const name of missing) {
+                const button = document.createElement('s-button');
+                button.type = 'outlined';
+                button.className = 'mode2-install-btn';
+                button.dataset.component = name;
+                button.textContent = `安装 ${name}`;
+                buttons.appendChild(button);
+            }
+            const all = document.createElement('s-button');
+            all.id = 'mode2-install-all';
+            all.type = 'filled-tonal';
+            all.textContent = '安装全部缺失组件';
+            buttons.appendChild(all);
+            actions.appendChild(buttons);
+        }
+
+        async function loadMode2Environment(showToastOnError = false) {
+            const detectButton = document.getElementById('mode2-refresh-env');
+            document.getElementById('start-selenium-auto').disabled = true;
+            detectButton.disabled = true;
+            try {
+                const res = await fetch('/api/mode2/env');
+                const data = await res.json();
+                if (data.success) {
+                    renderMode2Environment(data);
+                    if (!data.ready && showToastOnError) {
+                        showToast('模式 2 环境不完整，请确认后安装缺失组件', 'error');
+                    }
+                    return data;
+                } else {
+                    renderMode2Environment(null);
+                    return null;
+                }
+            } catch (e) {
+                renderMode2Environment(null);
+                if (showToastOnError) showToast('环境检测请求失败', 'error');
+                return null;
+            } finally {
+                detectButton.disabled = false;
+            }
+        }
+
+        async function installMode2Component(component) {
+            const confirmed = await new Promise(resolve => {
+                const dialog = document.getElementById('mode2-install-dialog');
+                const button = document.getElementById('mode2-confirm-install');
+                document.getElementById('mode2-install-confirm-text').textContent =
+                    `将安装「${component === 'all' ? '全部缺失组件' : component}」。程序只执行固定安装命令，需要联网，可能要求系统授权。是否继续？`;
+                let accepted = false;
+                const accept = () => { accepted = true; };
+                button.addEventListener('click', accept);
+                dialog.addEventListener('closed', () => {
+                    button.removeEventListener('click', accept);
+                    resolve(accepted);
+                }, { once: true });
+                dialog.showed = true;
+            });
+            if (!confirmed) return;
+            document.getElementById('start-selenium-auto').disabled = true;
+            try {
+                const res = await fetch('/api/mode2/install', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ component, confirmed: true })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    showToast(data.error || data.message || '安装任务启动失败', 'error');
+                    return;
+                }
+                showToast('安装任务已启动，可在日志中查看进度', 'success');
+                setTimeout(() => loadMode2Environment(false), 1000);
+            } catch (e) {
+                showToast('安装请求失败', 'error');
+            }
+        }
 
         // 兜底：如果 showToast 未注入，则提供一个简单的控制台回退
         window.showToast = window.showToast || function (message, type = 'info') {
@@ -447,6 +675,9 @@
                         } else if (status === 'away_from_keyboard') {
                             document.getElementById('current-status').textContent = '🟡 正在挂机 (away_from_keyboard)'
                             document.getElementById('progress-text').textContent = `当前运行状态：正在挂机，完成情况 ${progress.current}/${progress.total} (${(progress.current / progress.total * 100).toFixed(2)}%)`;
+                        } else if (status === 'browser_burst') {
+                            document.getElementById('current-status').textContent = '🟡 浏览器打工中 (browser_burst)';
+                            document.getElementById('progress-text').textContent = `当前运行状态：Selenium 正在处理小节，完成情况 ${progress.current}/${progress.total} (${(progress.current / progress.total * 100).toFixed(2)}%)`;
                         } else if (status === 'completed') {
                             document.getElementById('current-status').textContent = '🟢 已完成 (completed)';
                             document.getElementById('progress-text').textContent = `当前运行状态：已完成，完成情况 ${progress.current}/${progress.total} (${(progress.current / progress.total * 100).toFixed(2)}%)`;
@@ -455,10 +686,6 @@
                         document.getElementById('task-status').style.display = 'block';
                         document.getElementById('task-status').value = progress.current / progress.total * 100;
                     }
-                    document.getElementById('task-progress').value =
-                        progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
-                    document.getElementById('progress-text').textContent =
-                        `${progress.current}/${progress.total}`;
                 }
             } catch (error) {
                 console.warn('状态更新失败:', error);
@@ -712,12 +939,26 @@
                 });
             document.getElementById('loading').style.display = 'none';
             document.getElementById('course-list-container').style.display = 'block';
-            document.getElementById('params-setup').style.display = 'block';
+            const mode1Setup = document.getElementById('params-setup');
+            mode1Setup.dataset.courseLoaded = '1';
+            // 完成课程选择后才显示最终任务设置区，模式选择位于此处。
+            mode1Setup.style.display = 'block';
                         // 更新单元列表分割器中的课本名称
                         const unitTitle = document.getElementById('unit-list-title');
                         if (unitTitle) unitTitle.textContent = selectedCourseName ? `(课本 ${selectedCourseName})` : '';
                         updateSelectionSummary();
         }
+
+        function updateSectionVisibility() {
+            const showAll = document.getElementById('show-all-sections').checked;
+            document.querySelectorAll('#section-list s-tr').forEach(row => {
+                row.style.display = showAll || row.dataset.visible !== 'false' ? '' : 'none';
+            });
+            const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox')).filter(cb => cb.closest('s-tr').style.display !== 'none');
+            document.getElementById('section-select-all').checked = cbs.length > 0 && cbs.every(cb => cb.checked);
+        }
+
+        document.getElementById('show-all-sections').addEventListener('change', updateSectionVisibility);
 
         async function expandSections(unitId) {
             document.getElementById('loading').style.display = 'block';
@@ -736,7 +977,7 @@
                 document.querySelectorAll('#lesson-list s-checkbox').forEach(cb => { cb.checked = false; });
                 const chosen = selectedSections.get(unitId) || new Set();
                 tbody.innerHTML = data.sections.map(sec => `
-                    <s-tr>
+                    <s-tr data-visible="${sec.isvisible === 'false' ? 'false' : 'true'}">
                         <s-td>${sec.id}</s-td>
                         <s-td>${sec.location || sec.name || ''}</s-td>
                         <s-td>${sec.isvisible === 'false' ? '未开放' : (sec.iscomplete || '')}</s-td>
@@ -756,10 +997,11 @@
                 const unitLabel = [um.unitname, um.name].filter(Boolean).join(' - ') || unitId;
                 document.getElementById('section-list-title').textContent = `(单元 ${unitLabel})`;
                 document.getElementById('section-list-container').style.display = 'block';
+                updateSectionVisibility();
                 // 根据当前勾选情况更新表头“全选”状态
                 const headerAll = document.getElementById('section-select-all');
                 if (headerAll) {
-                    const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
+                    const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox')).filter(cb => cb.closest('s-tr').style.display !== 'none');
                     headerAll.checked = cbs.length > 0 && cbs.every(cb => cb.checked);
                 }
                 updateSelectionSummary();
@@ -771,11 +1013,11 @@
         }
 
         async function handleTaskStart(taskType) {
-            const brainBurst = document.getElementById('start-brain-burst-tooltip');
-            const awayFromKeyboard = document.getElementById('start-away-from-keyboard-tooltip');
+            const agreementPrefix = taskType === 'browser_burst' ? 'mode2-' : '';
+            const freeToUse = document.getElementById(`${agreementPrefix}freeToUse`);
+            const disclaimer = document.getElementById(`${agreementPrefix}disclaimer`);
             // 验证必填项
-            if (!document.getElementById('freeToUse').checked ||
-                !document.getElementById('disclaimer').checked) {
+            if (!freeToUse || !disclaimer || !freeToUse.checked || !disclaimer.checked) {
                 showToast('请先同意使用协议和免责声明！', 'error');
                 return;
             }
@@ -809,7 +1051,15 @@
             }
 
             // 类型特定验证
-            if (taskType === 'brain_burst') {
+            if (taskType === 'browser_burst') {
+                const idleTimeout = document.getElementById('mode2-idle-timeout').value.trim();
+                if (!/^\d+$/.test(idleTimeout) || Number(idleTimeout) < 5 || Number(idleTimeout) > 300) {
+                    showToast('空闲等待时间需为 5-300 秒的整数！', 'error');
+                    return;
+                }
+                params.headless = document.getElementById('mode2-headless').checked;
+                params.idleTimeout = Number(idleTimeout);
+            } else if (taskType === 'brain_burst') {
                 const rate = document.getElementById('correct-rate').value;
                 if (!validateRate(rate)) {
                     showToast('正确率格式错啦！', 'error');
@@ -831,6 +1081,15 @@
                     return;
                 }
                 params.time = time;
+            }
+
+            // 环境检测只在最终提交模式 2 任务时触发，不影响前面的课程信息 API。
+            if (taskType === 'browser_burst') {
+                const environment = await loadMode2Environment(true);
+                if (!environment || !environment.ready) {
+                    showToast('环境未就绪，请先安装缺失组件后再提交任务', 'error');
+                    return;
+                }
             }
 
             // 发送请求
@@ -890,7 +1149,7 @@
         }
 
         // 初始化
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             displayCookieAndLastModified();
             // 绑定登录模式切换行为
             const modeSwitch = document.getElementById('login-mode-switch');
@@ -913,6 +1172,10 @@
             }
             modeSwitch.addEventListener('change', refreshLoginMode);
             refreshLoginMode();
+            // 最终任务设置区中的模式选择；后端只在提交任务时设置 active mode
+            document.getElementById('task-mode-switch').addEventListener('change', (e) => {
+                switchRunMode(e.target.checked ? MODE2 : MODE1);
+            });
             const currentYear = new Date().getFullYear();
             const baseYear = 2024;
             const yearSpan = document.getElementById('copyrightYear');
@@ -920,9 +1183,11 @@
             yearSpan.textContent = currentYear > baseYear
                 ? `${baseYear}-${currentYear}`
                 : `${baseYear}`;
-            if (checkLogon()) {
+            // 读取本次任务偏好；两种模式都复用登录态和课程选择 API。
+            await loadRunMode();
+            if (await checkLogon()) {
                 loadCourses();
-            };
+            }
             setInterval(() => {
                 if (!shutdownFlag) {
                     updateStatus();
@@ -938,6 +1203,19 @@
             }
             if (e.target.id === 'start-away-from-keyboard') {
                 handleTaskStart('away_from_keyboard');
+            }
+            if (e.target.id === 'start-selenium-auto' || e.target.closest('#start-selenium-auto')) {
+                handleTaskStart('browser_burst');
+            }
+            const installButton = e.target.closest('.mode2-install-btn');
+            if (installButton) {
+                installMode2Component(installButton.dataset.component);
+            }
+            if (e.target.id === 'mode2-install-all' || e.target.closest('#mode2-install-all')) {
+                installMode2Component('all');
+            }
+            if (e.target.id === 'mode2-refresh-env' || e.target.closest('#mode2-refresh-env')) {
+                loadMode2Environment(true);
             }
             if (e.target.id === 'clear-all-selections') {
                 clearAllSelections();
@@ -968,7 +1246,7 @@
             // 更新表头“全选”勾选状态
             const headerAll = document.getElementById('section-select-all');
             if (headerAll) {
-                const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
+                const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox')).filter(cb => cb.closest('s-tr').style.display !== 'none');
                 headerAll.checked = cbs.length > 0 && cbs.every(x => x.checked);
             }
             updateSelectionSummary();
@@ -979,7 +1257,7 @@
             if (!headerAll) return;
             const tbody = document.getElementById('section-list');
             const unitId = tbody.dataset.unitId;
-            const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox'));
+            const cbs = Array.from(document.querySelectorAll('#section-list .section-checkbox')).filter(cb => cb.closest('s-tr').style.display !== 'none');
             const set = new Set(selectedSections.get(unitId) || []);
             // 若此前已选择了单元，而当前执行小节“全选” -> 切换为“按小节”模式
             if (headerAll.checked && selectedlessons.size > 0) {

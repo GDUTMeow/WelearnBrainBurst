@@ -37,6 +37,8 @@ from bs4 import BeautifulSoup
 import tls_client
 import base64
 
+import selenium_auto
+
 
 # ====================== 全局变量 ======================
 class GLOBAL:
@@ -51,6 +53,26 @@ _global = GLOBAL()
 
 # 最大线程数量（挂机用）
 MAX_THREADS = 32
+
+# 中断任务时等待线程退出的秒数
+TASK_JOIN_TIMEOUT = 5
+
+# ====================== 运行模式 ======================
+# mode1：原有的服务端刷课模式（登录后由本程序直接请求 Welearn 接口完成刷课 / 挂机）
+# mode2：WeAutomaticallyLearn 模式（在浏览器课程页面里运行的自动答题脚本）
+RunMode = Literal["mode1", "mode2"]
+AVAILABLE_MODES: Tuple[RunMode, ...] = ("mode1", "mode2")
+DEFAULT_MODE: RunMode = "mode1"
+
+MODE_DESCRIPTIONS: Dict[RunMode, str] = {
+    "mode1": "模式 1（服务端刷课）：登录后由本程序直接调用 Welearn 接口完成刷课与挂机任务。",
+    "mode2": "模式 2（Selenium 浏览器自动答题）：启动 Chrome，读取课程页面 DOM 中的答案并自动作答提交。",
+}
+
+CONFIG_PATH = "config.json"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODE2_SCRIPT_PATH = os.path.join(BASE_DIR, "static", "js", "mode2-autolearn.js")
+MODE2_SCRIPT_URL = "/static/js/mode2-autolearn.js"
 
 # ====================== 应用初始化 ======================
 app = Flask(__name__)
@@ -82,9 +104,7 @@ if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
 # 原日志处理器（保留最新日志）
-file_handler = logging.FileHandler(
-    os.path.join(log_dir, "latest.log"), mode="a", encoding="utf-8"
-)
+file_handler = logging.FileHandler(os.path.join(log_dir, "latest.log"), mode="a", encoding="utf-8")
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(logging.Formatter("%(message)s"))
 
@@ -96,9 +116,7 @@ system_handler.setLevel(logging.INFO)
 system_handler.setFormatter(logging.Formatter("%(message)s"))
 system_handler.addFilter(LogTypeFilter("SYSTEM"))
 
-app_handler = logging.FileHandler(
-    os.path.join(log_dir, "app.log"), mode="a", encoding="utf-8"
-)
+app_handler = logging.FileHandler(os.path.join(log_dir, "app.log"), mode="a", encoding="utf-8")
 app_handler.setLevel(logging.INFO)
 app_handler.setFormatter(logging.Formatter("%(message)s"))
 app_handler.addFilter(AppLogFilter())
@@ -149,7 +167,13 @@ class ProgressInfo(TypedDict):
 
 
 TaskStatusType = Literal[
-    "idle", "brain_burst", "away_from_keyboard", "error", "completed", "nologon"
+    "idle",
+    "brain_burst",
+    "away_from_keyboard",
+    "browser_burst",
+    "error",
+    "completed",
+    "nologon",
 ]
 
 
@@ -160,8 +184,9 @@ class GlobalState:
     def __init__(self):
         self.reset()
 
-    def reset(self):
-        """重置所有状态"""
+    def reset(self, keep_mode: bool = True):
+        """重置所有状态（默认保留运行模式，模式只由用户显式切换）"""
+        mode = getattr(self, "mode", DEFAULT_MODE) if keep_mode else DEFAULT_MODE
         self.current_task: Optional[threading.Thread] = None
         self.task_status: TaskStatusType = "nologon"
         self.progress: ProgressInfo = {"current": 0, "total": 0}
@@ -172,6 +197,7 @@ class GlobalState:
         self.cid: Optional[str] = None
         self.uid: Optional[str] = None
         self.classid: Optional[str] = None
+        self.mode: RunMode = mode
 
 
 state = GlobalState()
@@ -224,11 +250,30 @@ def log_access(response: Response):
         f'"{request.method} {request.path}" '
         f"{response.status_code} "
         f"{latency_ms}ms "
-        f"\"{request.headers.get('User-Agent', '')}\""
+        f'"{request.headers.get("User-Agent", "")}"'
     )
 
     log_message(log_entry, "ACCESS")
     return response
+
+
+# ====================== 配置读写 ======================
+def load_config() -> Dict[str, Any]:
+    """读取配置文件，文件不存在或损坏时返回空配置"""
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            config = json.load(f)
+        return config if isinstance(config, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_config(**values: Any) -> None:
+    """合并写入配置文件，避免覆盖已保存的 Cookie / 运行模式"""
+    config = load_config()
+    config.update(values)
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False)
 
 
 # ====================== 工具函数 ======================
@@ -253,7 +298,9 @@ def get_user_info(client: httpx.Client) -> Dict[str, Optional[str]]:
 
     try:
         session = build_tls_session()
-        response = session.get(info_url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"})
+        response = session.get(
+            info_url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"}
+        )
         soup = BeautifulSoup(response.text, "html.parser")
         user_div = soup.find("div", id="user1")
         if not user_div:
@@ -303,13 +350,13 @@ def _find_selected_birthyear(soup: BeautifulSoup) -> Optional[str]:
 
 # WAF 绕过部分
 def to_hex_byte_array(byte_array: bytes) -> str:
-    return ''.join([f'{byte:02x}' for byte in byte_array])
+    return "".join([f"{byte:02x}" for byte in byte_array])
 
 
 def generate_cipher_text(password: str):
     # 获取当前时间戳
     T0 = int(round(time.time() * 1000))
-    P = password.encode('utf-8')
+    P = password.encode("utf-8")
     V = (T0 >> 16) & 0xFF
     for byte in P:
         V ^= byte
@@ -317,24 +364,26 @@ def generate_cipher_text(password: str):
     T1 = int((T0 / 100) * 100 + remainder)
     P1 = to_hex_byte_array(P)
     S = f"{T1}*" + P1
-    S_encoded = S.encode('utf-8')
-    E = base64.b64encode(S_encoded).decode('utf-8')
+    S_encoded = S.encode("utf-8")
+    E = base64.b64encode(S_encoded).decode("utf-8")
     return [E, T1]
 
 
 def build_tls_session() -> tls_client.Session:
     """构建一个带浏览器指纹的 tls_client 会话，并注入当前 Cookie。"""
     session = tls_client.Session(client_identifier="chrome_120", random_tls_extension_order=True)
-    session.headers.update({
-        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'cache-control': 'no-cache',
-        'upgrade-insecure-requests': '1',
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'sec-ch-ua': '"Chromium";v="120", "Not?A_Brand";v="8", "Google Chrome";v="120"',
-        'sec-ch-ua-platform': '"Windows"',
-        'sec-ch-ua-mobile': '?0',
-    })
+    session.headers.update(
+        {
+            "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "cache-control": "no-cache",
+            "upgrade-insecure-requests": "1",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "sec-ch-ua": '"Chromium";v="120", "Not?A_Brand";v="8", "Google Chrome";v="120"',
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-ch-ua-mobile": "?0",
+        }
+    )
     try:
         if state.cookies:
             for k, v in state.cookies.items():
@@ -348,7 +397,6 @@ def build_tls_session() -> tls_client.Session:
     return session
 
 
-
 # ====================== 路由定义 ======================
 @app.route("/")
 def index():
@@ -360,6 +408,107 @@ def index():
 def static_files(filename):
     """静态文件路由"""
     return send_from_directory("static", filename)
+
+
+@app.route("/api/mode", methods=["GET"])
+def api_get_mode():
+    """获取当前运行模式"""
+    return jsonify(
+        success=True,
+        error="",
+        mode=state.mode,
+        activeMode=state.mode,
+        selectionDeferred=True,
+        availableModes=list(AVAILABLE_MODES),
+        descriptions=MODE_DESCRIPTIONS,
+        scriptUrl=MODE2_SCRIPT_URL,
+        description=MODE_DESCRIPTIONS.get(state.mode, ""),
+    )
+
+
+@app.route("/api/mode", methods=["POST"])
+def api_set_mode():
+    """兼容旧客户端：只校验候选模式，不提前改变当前任务模式。
+
+    真正的运行模式只在 /api/startTask 接受最终任务时设置；这样课程、单元和
+    小节信息在提交前始终走同一套查询 API，不会被模式选择提前拦截。
+    """
+    try:
+        mode = (request.json or {}).get("mode")
+        if mode not in AVAILABLE_MODES:
+            return jsonify(success=False, error=f"未知模式：{mode}")
+        return jsonify(
+            success=True,
+            error="",
+            mode=state.mode,
+            requestedMode=mode,
+            deferred=True,
+            description=MODE_DESCRIPTIONS.get(mode, ""),
+            message="运行模式将在最终提交任务时生效",
+        )
+    except Exception as e:
+        return jsonify(success=False, error=str(e))
+
+
+@app.route("/api/mode2/script", methods=["GET"])
+def api_mode2_script():
+    """返回模式 2 使用的浏览器自动答题脚本内容"""
+    try:
+        with open(MODE2_SCRIPT_PATH, encoding="utf-8") as f:
+            script = f.read()
+        return jsonify(success=True, error="", script=script, url=MODE2_SCRIPT_URL)
+    except Exception as e:
+        return jsonify(success=False, error=str(e), script="")
+
+
+@app.route("/api/mode2/env", methods=["GET"])
+def api_mode2_environment():
+    """检测 Selenium 模式 2 所需环境，不启动浏览器。"""
+    try:
+        environment = selenium_auto.detect_environment()
+        return jsonify(success=True, error="", **environment)
+    except Exception as e:
+        log_message(f"模式 2 环境检测失败：{e}", "APPERR")
+        return jsonify(success=False, error=str(e), ready=False, missing=[])
+
+
+@app.route("/api/mode2/install", methods=["POST"])
+def api_mode2_install():
+    """在用户明确确认后，后台安装一个固定组件或全部缺失组件。"""
+    # 环境安装是提交 Selenium 任务前的准备动作，不改变当前运行模式。
+    data = request.json or {}
+    if data.get("confirmed") is not True:
+        return jsonify(success=False, error="安装操作需要用户明确确认")
+    component = data.get("component", "all")
+    if component not in {"selenium", "chrome", "chromedriver", "all"}:
+        return jsonify(success=False, error=f"不支持安装组件：{component}")
+    result = selenium_auto.start_install(
+        component,
+        log=lambda message: log_message(message, "APPINFO"),
+    )
+    return jsonify(**result)
+
+
+def parse_cookie_string(cookies: str) -> Dict[str, str]:
+    """Parse a "k=v; k2=v2" cookie string into a dict.
+
+    Browser cookie jars usually separate entries with "; " which leaves a
+    leading space on every name after the first.  ChromeDriver rejects names
+    containing whitespace, so stripping is mandatory for mode 2 login reuse.
+    """
+    parsed: Dict[str, str] = {}
+    for part in cookies.split(";"):
+        cleaned_part = part.strip()
+        if not cleaned_part:
+            continue
+        eq_index = cleaned_part.find("=")
+        if eq_index == -1:
+            continue
+        key = cleaned_part[:eq_index].strip()
+        value = cleaned_part[eq_index + 1 :].strip()
+        if key:
+            parsed[key] = value
+    return parsed
 
 
 @app.route("/api/login", methods=["POST"])
@@ -391,8 +540,7 @@ def api_login(cookies: str = None):
         if validate_cookies(cookie_dict):
             client.cookies.update(cookie_dict)
             state.cookies = cookie_dict
-            with open("config.json", "w") as f:
-                json.dump({"cookies": cookies}, f)  # 这里保存的是原始cookies字符串
+            save_config(cookies=cookies)  # 这里保存的是原始cookies字符串
             userinfo = get_user_info(client)
             log_message(f"登录成功: {userinfo}")
             state.task_status = "idle"
@@ -435,9 +583,7 @@ def api_login_pw():
             code_challenge = m1.group(1) if m1 else ""
             state_param = m2.group(1) if m2 else ""
 
-        rturl = (
-            f"/connect/authorize/callback?client_id=welearn_web&redirect_uri=https%3A%2F%2Fwelearn.sflep.com%2Fsignin-sflep&response_type=code&scope=openid%20profile%20email%20phone%20address&code_challenge={code_challenge}&code_challenge_method=S256&state={state_param}&x-client-SKU=ID_NET472&x-client-ver=6.32.1.0"
-        )
+        rturl = f"/connect/authorize/callback?client_id=welearn_web&redirect_uri=https%3A%2F%2Fwelearn.sflep.com%2Fsignin-sflep&response_type=code&scope=openid%20profile%20email%20phone%20address&code_challenge={code_challenge}&code_challenge_method=S256&state={state_param}&x-client-SKU=ID_NET472&x-client-ver=6.32.1.0"
 
         while True:
             enpwd = generate_cipher_text(pwd)
@@ -477,18 +623,19 @@ def api_login_pw():
                     try:
                         cookie_dict = session.cookies.get_dict()
                     except Exception:
-                        for c in getattr(session.cookies, 'jar', []):
+                        for c in getattr(session.cookies, "jar", []):
                             cookie_dict[c.name] = c.value
 
                     client.cookies.update(cookie_dict)
                     state.cookies = cookie_dict
-                    with open("config.json", "w") as f:
-                        json.dump({"cookies": ";".join([f"{k}={v}" for k, v in cookie_dict.items()])}, f)
+                    save_config(cookies=";".join([f"{k}={v}" for k, v in cookie_dict.items()]))
 
                     userinfo = get_user_info(client)
                     log_message(f"登录成功: {userinfo}")
                     state.task_status = "idle"
-                    return jsonify(success=True, error="", msg=f"登陆成功：欢迎，{userinfo.get('name')}")
+                    return jsonify(
+                        success=True, error="", msg=f"登陆成功：欢迎，{userinfo.get('name')}"
+                    )
                 except Exception as e:
                     return jsonify(success=False, error=str(e))
 
@@ -573,9 +720,7 @@ def get_sections():
         except ValueError:
             return jsonify(success=False, error="无效的 unitId")
 
-        url = (
-            f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={_global.cid}&uid={_global.uid}&unitidx={unit_index}&classid={_global.classid}"
-        )
+        url = f"https://welearn.sflep.com/ajax/StudyStat.aspx?action=scoLeaves&cid={_global.cid}&uid={_global.uid}&unitidx={unit_index}&classid={_global.classid}"
         session = build_tls_session()
         response = session.get(
             url,
@@ -592,17 +737,41 @@ def get_sections():
 
 @app.route("/api/startTask", methods=["POST"])
 def start_task():
-    """启动任务接口"""
+    """启动模式 1 服务端任务或模式 2 Selenium 自动答题任务"""
     try:
+        data = request.json or {}
+        task_type = data.get("type")
+        if task_type not in {"brain_burst", "away_from_keyboard", "browser_burst"}:
+            return jsonify(success=False, error="未知任务类型")
+        # 模式只由最终提交的任务类型决定；此前的课程/单元/小节查询不看 mode。
+        task_mode: RunMode = "mode2" if task_type == "browser_burst" else "mode1"
+        if task_type == "browser_burst" and not state.cookies:
+            return jsonify(success=False, error="模式 2 需要先登录并保存 Cookie")
         if not state.task_status in ["idle", "completed", "error"]:
             return jsonify(success=False, error="已有任务在进行中")
+        # 清理已结束的线程；若还有任务在收尾（例如刚切换过模式），先拒绝新任务避免并发
+        state.active_threads = [t for t in state.active_threads if t.is_alive()]
+        if state.active_threads:
+            return jsonify(success=False, error="上一个任务仍在收尾，请稍后再试")
+        state.stop_event.clear()
         state.progress = {"current": 0, "total": 0}
-        data = request.json
         log_message(data)
-        task_type = data["type"]
-        lessons = data["lessonIds"]
+        lessons = data.get("lessonIds", [])
 
-        if task_type == "brain_burst":
+        if task_type == "browser_burst":
+            selected_sections = data.get("selectedSections")
+            headless = bool(data.get("headless", True))
+            try:
+                idle_timeout = max(5, min(300, int(data.get("idleTimeout", 15))))
+            except (TypeError, ValueError):
+                return jsonify(success=False, error="空闲等待时间必须是整数")
+            thread = SeleniumAutoLearnThread(
+                lessons,
+                selected_sections,
+                headless=headless,
+                idle_timeout=idle_timeout,
+            )
+        elif task_type == "brain_burst":
             rate = data["rate"]
             selected_sections = data.get("selectedSections")
             offset = data.get("offset")
@@ -614,6 +783,10 @@ def start_task():
         else:
             return jsonify(success=False, error="未知任务类型")
 
+        # 只有走到这里、任务参数与前置条件都通过后，才正式设置本次运行模式。
+        state.mode = task_mode
+        save_config(mode=state.mode)
+        log_message(f"最终提交任务，运行模式设置为 {state.mode}", "APPINFO")
         state.active_threads.append(thread)
         thread.start()
         return jsonify(success=True, error="")
@@ -642,6 +815,7 @@ def get_status():
             "status": state.task_status,
             "progress": state.progress,
             "activeThreads": len(state.active_threads),
+            "mode": state.mode,
             "success": True,
         }
     )
@@ -677,21 +851,66 @@ def exit():
 
 
 # ====================== 业务逻辑 ======================
+def bootstrap_config() -> None:
+    """启动时读取 Cookie；上次任务模式只作记录，不提前激活。"""
+    try:
+        config = load_config()
+        if not config:
+            log_message("未找到配置文件")
+        saved_mode = config.get("mode")
+        if saved_mode in AVAILABLE_MODES:
+            log_message(f"上次任务使用模式：{saved_mode}；当前模式将在最终提交任务时确定")
+        if cookies_str := config.get("cookies"):
+            cookie_dict = parse_cookie_string(cookies_str)
+            log_message("配置加载成功，正在尝试自动登录……")
+            if validate_cookies(cookie_dict):
+                state.cookies = cookie_dict
+                client.cookies.update(cookie_dict)
+                log_message("自动登录成功")
+                state.task_status = "idle"
+            else:
+                log_message("自动登录失败，请更新 Cookie")
+    except Exception as e:
+        log_message(f"配置加载失败: {str(e)}")
+
+
+def interrupt_tasks() -> int:
+    """请求中断正在运行的服务端任务（保留登录状态），返回被请求中断的任务数。
+
+    仍在收尾的线程会保留在 active_threads 中，避免与后续任务并发。
+    """
+    running = [t for t in state.active_threads if t.is_alive()]
+    state.active_threads = running
+    if not running:
+        return 0
+    state.stop_event.set()
+    for t in running:
+        t.join(timeout=TASK_JOIN_TIMEOUT)
+    state.active_threads = [t for t in running if t.is_alive()]
+    if state.task_status in ("brain_burst", "away_from_keyboard"):
+        state.task_status = "idle" if state.cookies else "nologon"
+    return len(running)
+
+
 def validate_cookies(cookies: Dict[str, str]) -> bool:
     """验证Cookie有效性"""
     try:
-        session = tls_client.Session(client_identifier="chrome_120", random_tls_extension_order=True)
+        session = tls_client.Session(
+            client_identifier="chrome_120", random_tls_extension_order=True
+        )
         # 常见浏览器请求头
-        session.headers.update({
-            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            'cache-control': 'no-cache',
-            'upgrade-insecure-requests': '1',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'sec-ch-ua': '"Chromium";v="120", "Not?A_Brand";v="8", "Google Chrome";v="120"',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-ch-ua-mobile': '?0',
-        })
+        session.headers.update(
+            {
+                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+                "cache-control": "no-cache",
+                "upgrade-insecure-requests": "1",
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "sec-ch-ua": '"Chromium";v="120", "Not?A_Brand";v="8", "Google Chrome";v="120"',
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-ch-ua-mobile": "?0",
+            }
+        )
         # 注入用户提供的 Cookie
         for k, v in cookies.items():
             try:
@@ -702,19 +921,25 @@ def validate_cookies(cookies: Dict[str, str]) -> bool:
                 pass
 
         test_url = "https://welearn.sflep.com/user/userinfo.aspx"
-        resp = session.get(test_url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"})
+        resp = session.get(
+            test_url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"}
+        )
         log_message(f"Cookie验证返回（tls_client）：{resp.text}", "APPDEBUG")
         text = resp.text
-        if ("我的资料" in text) or ("id=\"user1\"" in text):
+        if ("我的资料" in text) or ('id="user1"' in text):
             return True
 
         # 若命中阿里云 WAF 405 页面，尝试预热并重试
         if ("<title>405</title>" in text) or ("Your Request ID is" in text):
-            _ = session.get("https://welearn.sflep.com/user/prelogin.aspx?loginret=https://welearn.sflep.com/user/loginredirect.aspx")
-            resp2 = session.get(test_url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"})
+            _ = session.get(
+                "https://welearn.sflep.com/user/prelogin.aspx?loginret=https://welearn.sflep.com/user/loginredirect.aspx"
+            )
+            resp2 = session.get(
+                test_url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"}
+            )
             text2 = resp2.text
             log_message(f"Cookie验证重试返回（tls_client）：{text2}", "APPDEBUG")
-            return ("我的资料" in text2) or ("id=\"user1\"" in text2)
+            return ("我的资料" in text2) or ('id="user1"' in text2)
 
         return False
     except Exception as e:
@@ -755,9 +980,7 @@ class BrainBurstThread(threading.Thread):
                 )
                 if "异常" in response.text or "出错了" in response.text:
                     state.task_status = "error"
-                    log_message(
-                        f"获取课程 {lesson} 详细列表失败: {response.text}", "APPERR"
-                    )
+                    log_message(f"获取课程 {lesson} 详细列表失败: {response.text}", "APPERR")
                     return
                 sections = response.json()["info"]
                 # 仅处理选择的小节（如果有）
@@ -767,14 +990,12 @@ class BrainBurstThread(threading.Thread):
                 # 累加总数
                 state.progress["total"] += len(sections)
                 for section in sections:  # 获取课程的小节列表并刷课
-                    log_message(
-                        f"获取到课程 {lesson} 的详细信息 {response.json()}", "APPDEBUG"
-                    )
+                    log_message(f"获取到课程 {lesson} 的详细信息 {response.json()}", "APPDEBUG")
                     if section["isvisible"] == "false":
-                        log_message(f'跳过未开放课程 {section["location"]}', "APPERR")
+                        log_message(f"跳过未开放课程 {section['location']}", "APPERR")
                         log_message(f"课程 {lesson} 的返回信息：{section}", "APPDEBUG")
                     elif "未" in section["iscomplete"]:
-                        log_message(f'正在完成 {section["location"]}', "APPINFO")
+                        log_message(f"正在完成 {section['location']}", "APPINFO")
                         if isinstance(self.rate, int):
                             crate = self.rate
                         else:
@@ -866,7 +1087,7 @@ class BrainBurstThread(threading.Thread):
                                 continue
                     else:
                         state.progress["current"] += 1
-                        log_message(f'跳过已完成课程 {section["location"]}', "APPINFO")
+                        log_message(f"跳过已完成课程 {section['location']}", "APPINFO")
                 log_message(f"课程 {lesson} 刷课完成", "APPINFO")
             state.task_status = "completed"
         except Exception as e:
@@ -878,7 +1099,12 @@ class BrainBurstThread(threading.Thread):
 class AwayFromKeyboardThread(threading.Thread):
     """挂机刷时长线程"""
 
-    def __init__(self, lessonIds: List[str], duration: str, selectedSections: Optional[Dict[str, List[str]]] = None):
+    def __init__(
+        self,
+        lessonIds: List[str],
+        duration: str,
+        selectedSections: Optional[Dict[str, List[str]]] = None,
+    ):
         super().__init__()
         self.lessonIds = lessonIds
         self.duration = duration
@@ -912,7 +1138,7 @@ class AwayFromKeyboardThread(threading.Thread):
     def _process_section(self, section):
         """处理单个课程小节"""
         try:
-            log_message(f'开始处理: {section["location"]}', "APPINFO")
+            log_message(f"开始处理: {section['location']}", "APPINFO")
             scoid = section["id"]
             url = "https://welearn.sflep.com/Ajax/SCO.aspx"
 
@@ -926,9 +1152,7 @@ class AwayFromKeyboardThread(threading.Thread):
                     "cid": _global.cid,
                     "scoid": scoid,
                 },
-                headers={
-                    "Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"
-                },
+                headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
             )
 
             if "学习数据不正确" in response.text:
@@ -941,9 +1165,7 @@ class AwayFromKeyboardThread(threading.Thread):
                         "cid": _global.cid,
                         "scoid": scoid,
                     },
-                    headers={
-                        "Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"
-                    },
+                    headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
                 )
 
             back = json.loads(response.text)["comment"]
@@ -972,9 +1194,7 @@ class AwayFromKeyboardThread(threading.Thread):
                     "session_time": session_time,
                     "total_time": total_time,
                 },
-                headers={
-                    "Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"
-                },
+                headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
             )
 
             for current_time in range(1, learn_time + 1):
@@ -991,9 +1211,7 @@ class AwayFromKeyboardThread(threading.Thread):
                             "session_time": str(int(session_time)),
                             "total_time": str(int(total_time)),
                         },
-                        headers={
-                            "Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"
-                        },
+                        headers={"Referer": "https://welearn.sflep.com/student/StudyCourse.aspx"},
                     )
 
             self._http_request_with_retry(
@@ -1016,13 +1234,11 @@ class AwayFromKeyboardThread(threading.Thread):
             )
 
             state.progress["current"] += 1
-            log_message(
-                f'完成学习: {section["location"]} 耗时: {learn_time}秒', "APPINFO"
-            )
+            log_message(f"完成学习: {section['location']} 耗时: {learn_time}秒", "APPINFO")
 
         except Exception as e:
             self.wrong_lessons.append(section["location"])
-            log_message(f'处理失败: {section["location"]} - {str(e)}', "APPERR")
+            log_message(f"处理失败: {section['location']} - {str(e)}", "APPERR")
 
     def run(self):
         """线程主函数"""
@@ -1081,42 +1297,240 @@ class AwayFromKeyboardThread(threading.Thread):
                     t.join()
 
             state.task_status = "completed"
-            log_message(
-                f"刷时长任务完成，失败章节数: {len(self.wrong_lessons)}", "APPINFO"
-            )
+            log_message(f"刷时长任务完成，失败章节数: {len(self.wrong_lessons)}", "APPINFO")
         except Exception as e:
             state.task_status = "error"
             log_message(f"刷时长任务异常终止: {str(e)}", "APPERR")
 
 
+# 小节页出现练习内容的等待上限（秒），测试里可注入更小的值
+SECTION_READY_TIMEOUT = 45
+
+
+class SectionUnavailable(RuntimeError):
+    """站点拒绝进入某个小节（已完成且未开放复习等），可跳过并继续后续小节。"""
+
+
+class SeleniumAutoLearnThread(threading.Thread):
+    """模式 2：使用 Selenium 打开真实课程页并在页面 DOM 中自动答题。"""
+
+    def __init__(
+        self,
+        lesson_ids: List[str],
+        selected_sections: Optional[Dict[str, List[str]]] = None,
+        *,
+        headless: bool = True,
+        idle_timeout: int = 15,
+    ):
+        super().__init__(name="selenium-auto-learn", daemon=True)
+        self.lesson_ids = lesson_ids
+        self.selected_sections = selected_sections or {}
+        self.headless = headless
+        self.idle_timeout = idle_timeout
+        self.driver: Any = None
+
+    def _fetch_sections(self) -> List[Dict[str, Any]]:
+        if not _global.cid or not _global.classid or not _global.uid:
+            raise RuntimeError("请先在模式 2 中选择课程，无法获取课程元数据")
+        all_sections: List[Dict[str, Any]] = []
+        session = build_tls_session()
+        for lesson_id in self.lesson_ids:
+            try:
+                unit_index = _global.lessonIndex.index(lesson_id)
+            except ValueError as exc:
+                raise RuntimeError(f"无效的单元 ID：{lesson_id}") from exc
+            response = session.get(
+                "https://welearn.sflep.com/ajax/StudyStat.aspx",
+                params={
+                    "action": "scoLeaves",
+                    "cid": _global.cid,
+                    "uid": _global.uid,
+                    "unitidx": unit_index,
+                    "classid": _global.classid,
+                },
+                headers={
+                    "Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}"
+                },
+            )
+            sections = response.json().get("info", [])
+            # 该接口的 isvisible 并不可靠（实测某些单元整片为 "false"，但页面
+            # 仍然展示并允许选择），因此可用性以用户勾选为准，而不是这个字段。
+            wanted = self.selected_sections.get(lesson_id, [])
+            if wanted:
+                wanted_set = set(wanted)
+                sections = [s for s in sections if s.get("id") in wanted_set]
+            else:
+                sections = [s for s in sections if s.get("isvisible") != "false"]
+            all_sections.extend(sections)
+        return all_sections
+
+    def _course_url(self, scoid: str) -> str:
+        return (
+            "https://welearn.sflep.com/Student/StudyCourse.aspx"
+            f"?cid={_global.cid}&classid={_global.classid}&sco={scoid}"
+        )
+
+    def _inject_for_current_page(self) -> None:
+        source = selenium_auto.load_auto_learn_script()
+        # 课程正文位于 contentFrame；必须注入到真正包含题目的文档，
+        # 否则顶层实例永远没有提交记录，会被误判为「本节已完成」。
+        where = selenium_auto.inject_into_exercise(self.driver, source)
+        log_message(f"模式 2：已在 {where} 文档注入答题脚本", "APPINFO")
+
+    def _wait_for_section(self, section: Dict[str, Any]) -> int:
+        label = section.get("location", section["id"])
+        self.driver.get(self._course_url(str(section["id"])))
+        if not selenium_auto.wait_for_document_ready(
+            self.driver, timeout=45, stop_event=state.stop_event
+        ):
+            return 0
+        # 站点对已完成且未开放复习的小节会把 StudyCourse 重定向回课程页，
+        # 这种情况必须明确报错，而不是干等练习框出现。
+        deadline = time.monotonic() + SECTION_READY_TIMEOUT
+        while time.monotonic() < deadline and not state.stop_event.is_set():
+            if "course_info.aspx" in self.driver.current_url:
+                raise SectionUnavailable(
+                    f"课程 {label} 已被站点退回课程页（通常表示该小节已完成且未开放复习）"
+                )
+            if selenium_auto.find_exercise_frame(self.driver) is not None:
+                break
+            if selenium_auto._document_has_exercise(self.driver):
+                break
+            time.sleep(0.5)
+        else:
+            if not state.stop_event.is_set():
+                # 出版社托管的视频/导读页没有 submitinfo，本来就没有可答的题，
+                # 属于“该小节不适合模式 2”，不应让整批任务失败。
+                raise SectionUnavailable(f"课程 {label} 没有练习内容（可能是视频或导读页）")
+        self._inject_for_current_page()
+
+        started = time.monotonic()
+        last_changed = started
+        previous = None
+        settled_since: Optional[float] = None
+        submitted = 0
+        # 最长等待 30 分钟，避免页面异常时后台线程永久占用浏览器。
+        hard_deadline = started + 1800
+        while not state.stop_event.is_set():
+            if time.monotonic() >= hard_deadline:
+                raise TimeoutError(
+                    f"课程 {section.get('location', section['id'])} 超过最大等待时间"
+                )
+            try:
+                stats = selenium_auto.read_stats(self.driver)
+                if stats is None:
+                    self._inject_for_current_page()
+                    time.sleep(1)
+                    continue
+                # 只把「确认提交成功」和「切换了题目页」算作进度；nextcmd 的点击次数
+                # 会因为脚本反复点同一元素而持续增长，不能拿来判断是否还在推进。
+                current = (
+                    int(stats.get("submits", 0)),
+                    str(stats.get("page", "")),
+                )
+                submitted = current[0]
+                # 页面已是“已提交”状态（例如之前做过）时脚本不会再动手，等一个
+                # 很短的空闲窗口即可收尾，不必耗满 idle_timeout。
+                if stats.get("pageSettled") and current == previous:
+                    if settled_since is None:
+                        settled_since = time.monotonic()
+                    elif time.monotonic() - settled_since >= 3:
+                        return submitted
+                else:
+                    settled_since = None
+                if previous is None or current != previous:
+                    last_changed = time.monotonic()
+                    if previous is not None and current[0] > previous[0]:
+                        log_message(
+                            f"模式 2 已提交 {current[0]} 题：{section.get('location', section['id'])}",
+                            "APPINFO",
+                        )
+                previous = current
+                # 最后一题没有可用的 nextcmd 后，统计值会稳定；连续 idle_timeout
+                # 秒没有任何提交/跳题动作，即认为当前小节完成。
+                if time.monotonic() - last_changed >= self.idle_timeout:
+                    return submitted
+            except Exception as exc:
+                log_message(f"读取 Selenium 页面状态失败，将重试：{exc}", "APPERR")
+            time.sleep(1)
+        return submitted
+
+    def run(self) -> None:
+        state.task_status = "browser_burst"
+        try:
+            environment = selenium_auto.detect_environment()
+            if not environment["ready"]:
+                missing = ", ".join(environment["missing"])
+                raise RuntimeError(f"模式 2 环境未就绪，缺少：{missing}")
+            if not state.cookies:
+                raise RuntimeError("模式 2 需要先登录并保存 Cookie")
+
+            sections = self._fetch_sections()
+            if not sections:
+                wanted_total = sum(len(v) for v in self.selected_sections.values())
+                raise RuntimeError(
+                    f"没有找到可处理的小节（已选 {wanted_total} 节），"
+                    "请确认单元与小节仍属于当前课程后重新选择"
+                )
+            state.progress = {"current": 0, "total": len(sections)}
+
+            self.driver = selenium_auto.build_driver(
+                headless=self.headless,
+                logger=lambda message: log_message(f"模式 2 浏览器：{message}", "APPINFO"),
+            )
+            log_message("模式 2：打开登录域并载入 Cookie", "APPINFO")
+            added = selenium_auto.inject_cookies(
+                self.driver, state.cookies, stop_event=state.stop_event
+            )
+            if not added:
+                raise RuntimeError("浏览器未成功载入任何 Cookie")
+            log_message("模式 2：打开用户资料页验证登录", "APPINFO")
+            self.driver.get("https://welearn.sflep.com/user/userinfo.aspx")
+            selenium_auto.wait_for_document_ready(
+                self.driver, timeout=45, stop_event=state.stop_event
+            )
+            if not selenium_auto.logged_in(self.driver):
+                raise RuntimeError("Cookie 无效或已过期，请重新登录后再启动模式 2")
+
+            for section in sections:
+                if state.stop_event.is_set():
+                    return
+                label = section.get("location", section.get("id"))
+                log_message(f"模式 2 开始处理：{label}", "APPINFO")
+                try:
+                    submitted = self._wait_for_section(section)
+                except SectionUnavailable as exc:
+                    state.progress["current"] += 1
+                    log_message(f"模式 2 跳过小节：{exc}", "APPERR")
+                    continue
+                state.progress["current"] += 1
+                if submitted:
+                    log_message(f"模式 2 完成小节：{label}，提交 {submitted} 题", "APPINFO")
+                else:
+                    log_message(
+                        f"模式 2 跳过小节：{label} 没有待答题目（已完成或非练习页）",
+                        "APPINFO",
+                    )
+            state.task_status = "completed"
+        except Exception as exc:
+            state.task_status = "error"
+            log_message(f"模式 2 Selenium 任务异常：{exc}", "APPERR")
+        finally:
+            if self.driver is not None:
+                try:
+                    self.driver.quit()
+                except Exception:
+                    pass
+
+
 # ====================== 启动配置 ======================
 if __name__ == "__main__":
-    # 加载配置文件
-    try:
-        with open("config.json") as f:
-            config = json.load(f)
-            if cookies_str := config.get("cookies"):
-                cookie_dict = dict(
-                    map(lambda x: x.split("=", 1), cookies_str.split(";"))
-                )
-                log_message("配置加载成功，正在尝试自动登录……")
-                if validate_cookies(cookie_dict):
-                    state.cookies = cookie_dict
-                    client.cookies.update(cookie_dict)
-                    log_message("自动登录成功")
-                    state.task_status = "idle"
-                else:
-                    log_message("自动登录失败，请更新 Cookie")
-    except FileNotFoundError:
-        log_message("未找到配置文件")
-    except Exception as e:
-        log_message(f"配置加载失败: {str(e)}")
+    # 加载配置文件（恢复运行模式 + 尝试自动登录）
+    bootstrap_config()
 
     port = get_port()
     log_message(f"已获取可用端口: {port}，绑定到 0.0.0.0:{port}")
-    log_message(
-        f"将自动打开浏览器访问 http://127.0.0.1:{port}，你也可以自己打开浏览器进行访问"
-    )
+    log_message(f"将自动打开浏览器访问 http://127.0.0.1:{port}，你也可以自己打开浏览器进行访问")
     webbrowser.open(f"http://127.0.0.1:{port}")
     # 启动应用
     with LogCapture(state.log_buffer):

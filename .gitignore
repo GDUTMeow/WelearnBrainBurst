@@ -6,3 +6,10 @@ build
 __pycache__
 .venv 
 tmp.py
+.selenium-profile
+.selenium-cache
+.chrome-test
+.pytest_cache
+tests/
+*auto.py
+

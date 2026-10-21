@@ -9,4 +9,12 @@ dependencies = [
     "flask>=3.1.2",
     "httpx>=0.28.1",
     "tls-client>=1.0.1",
+    "selenium>=4.20.0",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.format]
+quote-style = "double"
