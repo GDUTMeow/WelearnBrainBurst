@@ -66,7 +66,7 @@ DEFAULT_MODE: RunMode = "mode1"
 
 MODE_DESCRIPTIONS: Dict[RunMode, str] = {
     "mode1": "模式 1（服务端刷课）：登录后由本程序直接调用 Welearn 接口完成刷课与挂机任务。",
-    "mode2": "模式 2（Selenium 浏览器自动答题）：启动 Chrome，读取课程页面 DOM 中的答案并自动作答提交。",
+    "mode2": "模式 2（浏览器自动答题）：启动浏览器，读取课程页面中的答案并自动作答提交。",
 }
 
 CONFIG_PATH = "config.json"
@@ -79,6 +79,13 @@ app = Flask(__name__)
 
 
 # ====================== 日志系统配置 ======================
+# UI 日志按用途拆分：APP=业务/任务进展，ACCESS=真实接口访问，SYSTEM=启动与环境。
+LOG_KINDS: Tuple[str, ...] = ("APP", "ACCESS", "SYSTEM")
+
+# 轮询类接口每秒都会被前端调用，记录它们只会淹没真正有价值的日志。
+QUIET_PATHS = {"/api/status", "/api/getLog"}
+
+
 class LogTypeFilter(logging.Filter):
     """按日志类型过滤的处理器"""
 
@@ -104,7 +111,7 @@ if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
 # 原日志处理器（保留最新日志）
-file_handler = logging.FileHandler(os.path.join(log_dir, "latest.log"), mode="a", encoding="utf-8")
+file_handler = logging.FileHandler(os.path.join(log_dir, "latest.log"), mode="w", encoding="utf-8")
 file_handler.setLevel(logging.INFO)
 file_handler.setFormatter(logging.Formatter("%(message)s"))
 
@@ -133,7 +140,18 @@ console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(logging.Formatter("%(message)s"))
 
-# 配置应用日志
+# Werkzeug 的每条请求日志单独落到 console.log，避免混进业务日志
+werkzeug_logger = logging.getLogger("werkzeug")
+werkzeug_logger.handlers.clear()
+werkzeug_handler = logging.FileHandler(
+    os.path.join(log_dir, "console.log"), mode="a", encoding="utf-8"
+)
+werkzeug_handler.setFormatter(logging.Formatter("%(message)s"))
+werkzeug_logger.addHandler(werkzeug_handler)
+werkzeug_logger.propagate = False
+
+# 配置应用日志（先清掉 Flask 可能预置的 handler，避免终端重复输出）
+app.logger.handlers.clear()
 app.logger.setLevel(logging.INFO)
 app.logger.addHandler(file_handler)
 app.logger.addHandler(console_handler)
@@ -190,7 +208,7 @@ class GlobalState:
         self.current_task: Optional[threading.Thread] = None
         self.task_status: TaskStatusType = "nologon"
         self.progress: ProgressInfo = {"current": 0, "total": 0}
-        self.log_buffer: IO[str] = StringIO()
+        self.log_buffers: Dict[str, IO[str]] = {kind: StringIO() for kind in LOG_KINDS}
         self.stop_event = threading.Event()
         self.active_threads: List[threading.Thread] = []
         self.cookies: Optional[Dict[str, str]] = None
@@ -205,30 +223,20 @@ client = httpx.Client()
 
 
 # ====================== 日志工具 ======================
-class LogCapture:
-    """日志捕获上下文管理器"""
-
-    def __init__(self, buffer: StringIO):
-        self.buffer = buffer
-        self.original_stdout = sys.stdout
-        self.original_stderr = sys.stderr
-
-    def __enter__(self):
-        sys.stdout = self.buffer
-        sys.stderr = self.buffer
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        sys.stdout = self.original_stdout
-        sys.stderr = self.original_stderr
+def log_kind(log_type: str) -> str:
+    """把细分日志类型归并到 UI 的三个分类里"""
+    if log_type == "ACCESS":
+        return "ACCESS"
+    if log_type.startswith("APP"):
+        return "APP"
+    return "SYSTEM"
 
 
-# ====================== 日志工具 ======================
 def log_message(message: str, log_type: str = "SYSTEM"):
     """统一日志记录函数"""
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     log_entry = f"[{timestamp}] [{log_type}] {message}"
-    state.log_buffer.write(log_entry + "\n")
+    state.log_buffers[log_kind(log_type)].write(log_entry + "\n")
     app.logger.info(log_entry, extra={"log_type": log_type})
 
 
@@ -241,7 +249,9 @@ def record_request_start():
 
 @app.after_request
 def log_access(response: Response):
-    """记录访问日志"""
+    """记录访问日志；轮询接口和静态资源不记，避免把日志冲成噪声"""
+    if request.path in QUIET_PATHS or request.path.startswith("/static/"):
+        return response
     latency = time.time() - request.start_time
     latency_ms = int(latency * 1000)
 
@@ -658,8 +668,8 @@ def get_courses():
             url,
             headers={"Referer": "https://welearn.sflep.com/student/index.aspx"},
         )
-        log_message(f"获取课程列表: {response.text}", "APPDEBUG")
         courses: List[CourseInfo] = response.json()["clist"]
+        log_message(f"课程列表：{len(courses)} 门课程", "APPDEBUG")
         return jsonify(success=True, error="", courses=courses)
     except Exception as e:
         return jsonify(success=False, error=str(e))
@@ -680,7 +690,7 @@ def get_lessons():
             url,
             headers={"Referer": "https://welearn.sflep.com/student/course_info.aspx"},
         )
-        log_message(f"成功获取到返回：{response.text}", "APPDEBUG")
+        log_message(f"课程信息页：{len(response.text)} 字节", "APPDEBUG")
         _global.uid = re.search('"uid":(.*?),', response.text).group(1)
         _global.classid = re.search('"classid":"(.*?)"', response.text).group(1)
         log_message(
@@ -693,8 +703,8 @@ def get_lessons():
             params={"action": "courseunits", "cid": _global.cid, "uid": _global.uid},
             headers={"Referer": "https://welearn.sflep.com/student/course_info.aspx"},
         )
-        log_message(f"获取课程单元列表: {response.text}", "APPDEBUG")
         lessons = response.json()["info"]
+        log_message(f"单元列表：{len(lessons)} 个单元", "APPDEBUG")
         _global.lessonList = lessons
         _global.lessonIndex = [i.get("id") for i in lessons]
         return jsonify(success=True, error="", lessons=lessons)
@@ -728,8 +738,8 @@ def get_sections():
                 "Referer": f"https://welearn.sflep.com/student/course_info.aspx?cid={_global.cid}"
             },
         )
-        log_message(f"获取小节列表: {response.text}", "APPDEBUG")
         sections = response.json().get("info", [])
+        log_message(f"小节列表：{len(sections)} 个小节", "APPDEBUG")
         return jsonify(success=True, error="", sections=sections)
     except Exception as e:
         return jsonify(success=False, error=str(e))
@@ -737,7 +747,7 @@ def get_sections():
 
 @app.route("/api/startTask", methods=["POST"])
 def start_task():
-    """启动模式 1 服务端任务或模式 2 Selenium 自动答题任务"""
+    """启动模式 1 服务端任务或模式 2 自动答题任务"""
     try:
         data = request.json or {}
         task_type = data.get("type")
@@ -823,10 +833,26 @@ def get_status():
 
 @app.route("/api/getLog", methods=["GET"])
 def get_log():
-    """返回当前日志缓冲内容"""
+    """返回指定分类的日志；type=app|access|system|all，默认只看业务日志"""
     try:
-        logs = state.log_buffer.getvalue()
-        return jsonify(success=True, logs=logs)
+        wanted = (request.args.get("type") or "app").lower()
+        if wanted == "all":
+            kinds = LOG_KINDS
+        else:
+            kinds = tuple(kind for kind in LOG_KINDS if kind.lower() == wanted)
+            if not kinds:
+                return jsonify(
+                    success=False, error="type 只能是 app、access、system 或 all", logs=""
+                )
+        if len(kinds) == 1:
+            logs = state.log_buffers[kinds[0]].getvalue()
+        else:
+            # 合并时按行排序，保持时间顺序可读
+            lines = []
+            for kind in kinds:
+                lines.extend(state.log_buffers[kind].getvalue().splitlines())
+            logs = "\n".join(sorted(lines))
+        return jsonify(success=True, logs=logs, type=wanted)
     except Exception as e:
         return jsonify(success=False, error=str(e), logs="")
 
@@ -924,7 +950,7 @@ def validate_cookies(cookies: Dict[str, str]) -> bool:
         resp = session.get(
             test_url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"}
         )
-        log_message(f"Cookie验证返回（tls_client）：{resp.text}", "APPDEBUG")
+        log_message(f"Cookie 校验：HTTP {resp.status_code}，{len(resp.text)} 字节", "APPDEBUG")
         text = resp.text
         if ("我的资料" in text) or ('id="user1"' in text):
             return True
@@ -938,7 +964,7 @@ def validate_cookies(cookies: Dict[str, str]) -> bool:
                 test_url, headers={"Referer": "https://welearn.sflep.com/student/index.aspx"}
             )
             text2 = resp2.text
-            log_message(f"Cookie验证重试返回（tls_client）：{text2}", "APPDEBUG")
+            log_message(f"Cookie 校验重试：HTTP {resp2.status_code}，{len(text2)} 字节", "APPDEBUG")
             return ("我的资料" in text2) or ('id="user1"' in text2)
 
         return False
@@ -990,10 +1016,12 @@ class BrainBurstThread(threading.Thread):
                 # 累加总数
                 state.progress["total"] += len(sections)
                 for section in sections:  # 获取课程的小节列表并刷课
-                    log_message(f"获取到课程 {lesson} 的详细信息 {response.json()}", "APPDEBUG")
+                    log_message(f"课程 {lesson} 详情：HTTP {response.status_code}", "APPDEBUG")
                     if section["isvisible"] == "false":
                         log_message(f"跳过未开放课程 {section['location']}", "APPERR")
-                        log_message(f"课程 {lesson} 的返回信息：{section}", "APPDEBUG")
+                        log_message(
+                            f"小节 {section.get('id')}：{section.get('iscomplete')}", "APPDEBUG"
+                        )
                     elif "未" in section["iscomplete"]:
                         log_message(f"正在完成 {section['location']}", "APPINFO")
                         if isinstance(self.rate, int):
@@ -1305,10 +1333,19 @@ class AwayFromKeyboardThread(threading.Thread):
 
 # 小节页出现练习内容的等待上限（秒），测试里可注入更小的值
 SECTION_READY_TIMEOUT = 45
+# 单个小节页面加载失败后的重试次数与页面加载超时
+SECTION_LOAD_ATTEMPTS = 3
+SECTION_LOAD_TIMEOUT = 45
+# 连续这么多个小节加载失败就停下，避免在站点故障时把整个课程空跑一遍
+SECTION_MAX_CONSECUTIVE_FAILURES = 5
 
 
 class SectionUnavailable(RuntimeError):
     """站点拒绝进入某个小节（已完成且未开放复习等），可跳过并继续后续小节。"""
+
+
+class SectionLoadFailed(RuntimeError):
+    """小节页面重试后仍加载失败；跳过该小节，不影响其余小节。"""
 
 
 class SeleniumAutoLearnThread(threading.Thread):
@@ -1377,12 +1414,42 @@ class SeleniumAutoLearnThread(threading.Thread):
         where = selenium_auto.inject_into_exercise(self.driver, source)
         log_message(f"模式 2：已在 {where} 文档注入答题脚本", "APPINFO")
 
+    def _open_section_page(self, label: str, url: str) -> bool:
+        """打开练习页并等待文档就绪，失败按次数重试。
+
+        返回 False 表示用户点了停止；重试仍失败时抛 SectionLoadFailed。
+        """
+        last_error: Optional[Exception] = None
+        for attempt in range(1, SECTION_LOAD_ATTEMPTS + 1):
+            if state.stop_event.is_set():
+                return False
+            try:
+                self.driver.get(url)
+                if selenium_auto.wait_for_document_ready(
+                    self.driver, timeout=SECTION_LOAD_TIMEOUT, stop_event=state.stop_event
+                ):
+                    return True
+                if state.stop_event.is_set():
+                    return False
+                last_error = TimeoutError(f"页面 {SECTION_LOAD_TIMEOUT}s 内未完成加载")
+            except Exception as exc:  # 导航超时、驱动报错都走同一套重试
+                last_error = exc
+            if attempt < SECTION_LOAD_ATTEMPTS:
+                wait_seconds = attempt * 2
+                log_message(
+                    f"模式 2 打开小节失败（第 {attempt}/{SECTION_LOAD_ATTEMPTS} 次），"
+                    f"{wait_seconds}s 后重试：{label} - {last_error}",
+                    "APPERR",
+                )
+                if state.stop_event.wait(wait_seconds):
+                    return False
+        raise SectionLoadFailed(
+            f"小节 {label} 重试 {SECTION_LOAD_ATTEMPTS} 次仍无法加载：{last_error}"
+        )
+
     def _wait_for_section(self, section: Dict[str, Any]) -> int:
         label = section.get("location", section["id"])
-        self.driver.get(self._course_url(str(section["id"])))
-        if not selenium_auto.wait_for_document_ready(
-            self.driver, timeout=45, stop_event=state.stop_event
-        ):
+        if not self._open_section_page(label, self._course_url(str(section["id"]))):
             return 0
         # 站点对已完成且未开放复习的小节会把 StudyCourse 重定向回课程页，
         # 这种情况必须明确报错，而不是干等练习框出现。
@@ -1451,7 +1518,7 @@ class SeleniumAutoLearnThread(threading.Thread):
                 if time.monotonic() - last_changed >= self.idle_timeout:
                     return submitted
             except Exception as exc:
-                log_message(f"读取 Selenium 页面状态失败，将重试：{exc}", "APPERR")
+                log_message(f"读取页面状态失败，将重试：{exc}", "APPERR")
             time.sleep(1)
         return submitted
 
@@ -1472,7 +1539,25 @@ class SeleniumAutoLearnThread(threading.Thread):
                     f"没有找到可处理的小节（已选 {wanted_total} 节），"
                     "请确认单元与小节仍属于当前课程后重新选择"
                 )
+            # 已完成且未开放复习的小节，站点会直接退回课程页；提前剔除，
+            # 避免为几百个注定跳过的小节逐个打开浏览器页面。
+            pending_sections = [
+                section
+                for section in sections
+                if not (
+                    str(section.get("iscomplete", "")) == "已完成"
+                    and str(section.get("enablereview", "")).lower() != "true"
+                )
+            ]
             state.progress = {"current": 0, "total": len(sections)}
+            already_done = len(sections) - len(pending_sections)
+            if already_done:
+                log_message(
+                    f"模式 2：所选小节中 {already_done} 节已完成且未开放复习，将直接跳过；"
+                    f"实际处理 {len(pending_sections)} 节",
+                    "APPINFO",
+                )
+            sections = pending_sections
 
             self.driver = selenium_auto.build_driver(
                 headless=self.headless,
@@ -1492,6 +1577,11 @@ class SeleniumAutoLearnThread(threading.Thread):
             if not selenium_auto.logged_in(self.driver):
                 raise RuntimeError("Cookie 无效或已过期，请重新登录后再启动模式 2")
 
+            # 提前跳过的小节也要计入进度与统计，否则进度条和汇总会对不上
+            completed = failed = 0
+            skipped = already_done
+            state.progress["current"] = already_done
+            consecutive_failures = 0
             for section in sections:
                 if state.stop_event.is_set():
                     return
@@ -1501,20 +1591,40 @@ class SeleniumAutoLearnThread(threading.Thread):
                     submitted = self._wait_for_section(section)
                 except SectionUnavailable as exc:
                     state.progress["current"] += 1
+                    skipped += 1
+                    consecutive_failures = 0
                     log_message(f"模式 2 跳过小节：{exc}", "APPERR")
                     continue
+                except SectionLoadFailed as exc:
+                    state.progress["current"] += 1
+                    failed += 1
+                    consecutive_failures += 1
+                    log_message(f"模式 2 小节加载失败，已跳过：{exc}", "APPERR")
+                    if consecutive_failures >= SECTION_MAX_CONSECUTIVE_FAILURES:
+                        raise RuntimeError(
+                            f"连续 {consecutive_failures} 个小节加载失败，"
+                            "已停止任务，请检查网络或稍后重试"
+                        ) from exc
+                    continue
                 state.progress["current"] += 1
+                consecutive_failures = 0
                 if submitted:
+                    completed += 1
                     log_message(f"模式 2 完成小节：{label}，提交 {submitted} 题", "APPINFO")
                 else:
+                    skipped += 1
                     log_message(
                         f"模式 2 跳过小节：{label} 没有待答题目（已完成或非练习页）",
                         "APPINFO",
                     )
+            log_message(
+                f"模式 2 全部结束：提交 {completed} 节、跳过 {skipped} 节、失败 {failed} 节",
+                "APPINFO",
+            )
             state.task_status = "completed"
         except Exception as exc:
             state.task_status = "error"
-            log_message(f"模式 2 Selenium 任务异常：{exc}", "APPERR")
+            log_message(f"模式 2 任务异常：{exc}", "APPERR")
         finally:
             if self.driver is not None:
                 try:
@@ -1529,9 +1639,12 @@ if __name__ == "__main__":
     bootstrap_config()
 
     port = get_port()
+    log_message(
+        f"启动完成：端口 {port}，Cookie {'已恢复' if state.cookies else '未登录'}",
+        "SYSTEM",
+    )
     log_message(f"已获取可用端口: {port}，绑定到 0.0.0.0:{port}")
     log_message(f"将自动打开浏览器访问 http://127.0.0.1:{port}，你也可以自己打开浏览器进行访问")
     webbrowser.open(f"http://127.0.0.1:{port}")
     # 启动应用
-    with LogCapture(state.log_buffer):
-        app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False)

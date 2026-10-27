@@ -249,10 +249,12 @@
                                 <div align="left">
                                     <s-alert id="selection-summary" style="margin-bottom: 12px; text-align: left; color: var(--md-sys-color-on-surface-variant); width: 100%;"></s-alert>
                                 </div>
-                                <div id="task-mode-selector" style="margin: 12px 0; text-align: right;">
-                                    模式 1 · 服务端刷课 <s-switch id="task-mode-switch" aria-label="本次任务模式"></s-switch> 模式 2 · 浏览器自动答题
+                                <div id="task-mode-selector" style="margin: 12px 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px;">
+                                    <span>请求模式</span>
+                                    <s-switch id="task-mode-switch" aria-label="本次任务模式"></s-switch>
+                                    <span>浏览器模式</span>
                                 </div>
-                    <section id="mode2-panel" style="display: none;" aria-label="Selenium 自动答题设置">
+                    <section id="mode2-panel" style="display: none;" aria-label="自动答题设置">
                         <div class="mode2-content">
                             <section aria-labelledby="mode2-settings-title" class="mode2-settings">
                                 <s-divider id="mode2-settings-title">自动答题设置</s-divider>
@@ -360,8 +362,8 @@
             applyRunMode();
             showToast(
                 runMode === MODE2
-                    ? '已选择本次最终提交使用模式 2'
-                    : '已选择本次最终提交使用模式 1',
+                    ? '已选择本次最终提交使用浏览器模式'
+                    : '已选择本次最终提交使用请求模式',
                 'success'
             );
         }
@@ -437,7 +439,7 @@
                 if (data.success) {
                     renderMode2Environment(data);
                     if (!data.ready && showToastOnError) {
-                        showToast('模式 2 环境不完整，请确认后安装缺失组件', 'error');
+                        showToast('浏览器模式环境不完整，请确认后安装缺失组件', 'error');
                     }
                     return data;
                 } else {
@@ -677,7 +679,7 @@
                             document.getElementById('progress-text').textContent = `当前运行状态：正在挂机，完成情况 ${progress.current}/${progress.total} (${(progress.current / progress.total * 100).toFixed(2)}%)`;
                         } else if (status === 'browser_burst') {
                             document.getElementById('current-status').textContent = '🟡 浏览器打工中 (browser_burst)';
-                            document.getElementById('progress-text').textContent = `当前运行状态：Selenium 正在处理小节，完成情况 ${progress.current}/${progress.total} (${(progress.current / progress.total * 100).toFixed(2)}%)`;
+                            document.getElementById('progress-text').textContent = `当前运行状态：正在处理小节，完成情况 ${progress.current}/${progress.total} (${(progress.current / progress.total * 100).toFixed(2)}%)`;
                         } else if (status === 'completed') {
                             document.getElementById('current-status').textContent = '🟢 已完成 (completed)';
                             document.getElementById('progress-text').textContent = `当前运行状态：已完成，完成情况 ${progress.current}/${progress.total} (${(progress.current / progress.total * 100).toFixed(2)}%)`;
@@ -692,14 +694,6 @@
             }
         }
 
-        // 获取日志
-        async function fetchLogs() {
-            const res = await fetch('/api/getLog');
-            const { logs } = await res.json();
-            const logOutput = document.getElementById('log-output');
-            logOutput.textContent = logs;
-            logOutput.scrollTop = logOutput.scrollHeight;
-        }
 
         // 开始任务
         async function startTask(taskType) {
@@ -711,10 +705,7 @@
 
             if (res.ok) {
                 if (!autoRefreshInterval) {
-                    autoRefreshInterval = setInterval(async () => {
-                        await updateStatus();
-                        await fetchLogs();
-                    }, 2000);
+                    autoRefreshInterval = setInterval(updateStatus, 2000);
                 }
             }
         }

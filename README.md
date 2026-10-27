@@ -50,7 +50,24 @@
 
 > 模式 2 的作答行为来自 [KeqingMoe/WeAutomaticallyLearn](https://github.com/KeqingMoe/WeAutomaticallyLearn)（MIT License, Copyright (c) 2025 KeqingMoe），脚本头部保留了原始的版权与许可声明。
 
-> 模式 2 只处理有练习内容的小节。已完成且未开放复习的小节会被站点退回课程页，出版社托管的视频/导读页也没有题目，这两种情况都会在日志中标注「跳过小节」并继续后面的小节。
+> 模式 2 只处理有练习内容的小节：已完成且未开放复习的小节会在开始前统一跳过（不会逐个打开页面），出版社托管的视频/导读页会在打开后识别并跳过。
+>
+> 单个小节页面加载失败会自动重试 3 次（每次间隔递增），仍失败则跳过该小节继续后面的；连续 5 个小节加载失败才停止任务。任务结束时会输出「提交 X 节、跳过 Y 节、失败 Z 节」的汇总。
+
+## 日志
+
+运行日志按用途分成三类，互不干扰：
+
+| 文件 | 内容 |
+| --- | --- |
+| `logs/app.log` | 业务与任务进展（登录、选课、模式 2 每个小节的处理结果） |
+| `logs/access.log` | 真实接口访问；`/api/status`、`/api/getLog` 等轮询接口和静态资源不记录 |
+| `logs/system.log` | 启动信息、模式切换等系统事件 |
+| `logs/latest.log` | 本次运行的全部日志（每次启动重写） |
+| `logs/console.log` | Flask / Werkzeug 服务器自身的请求输出（每请求一行），与业务日志隔离 |
+| `logs/chromedriver-*.log` | ChromeDriver 诊断日志，仅保留最近 5 份 |
+
+接口 `GET /api/getLog?type=app|access|system|all` 可按分类取回日志。
 
 ## 前端组件
 
